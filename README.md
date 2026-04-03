@@ -1,9 +1,11 @@
 # Hera — Hercules Hyperion GUI
 
 Hera is a graphical front-end for the [SDL Hercules](https://github.com/SDL-Hercules-390/hyperion) IBM mainframe emulator.  
-It replaces Jason (by Oleh Yuschuk) with a modern PySide6 interface, providing a visual workspace for managing CPUs, DASD, tapes, card readers/punches, printers, 3270 terminals, and the operator console — all from a single window.
+It is based on Jason (by Oleh Yuschuk) and builds on it to provide a modern PySide6 interface, offering a visual workspace for managing CPUs, DASD, tapes, card readers/punches, printers, 3270 terminals, and the operator console — all from a single window.
 
 > **Platform note:** Hera is developed and tested on Linux. It contains no OS-specific code and may work on macOS or Windows, but those platforms have not been tested.
+ 
+![Hera screenshot](app/bitmaps/screenshot.png)
 
 ---
 
