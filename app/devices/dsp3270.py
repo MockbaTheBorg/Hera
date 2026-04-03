@@ -120,7 +120,7 @@ class Dsp3270Device(DeviceBase):
                 self._import_error = str(exc)
 
     def _session_connected(self) -> bool:
-        return bool(self._session is not None and self._session._is_connected)
+        return bool(self._session is not None and self._session.is_connected)
 
     def _set_socket_button(self, button, enabled: bool):
         if button is not None and shiboken6.isValid(button):
@@ -189,8 +189,8 @@ class Dsp3270Device(DeviceBase):
                     self._on_connection_state_changed, Qt.QueuedConnection
                 )
                 # Sync current state immediately so the widget doesn't start blank/disconnected
-                self._workspace.set_connected(self._session._is_connected)
-                self._on_connection_state_changed(self._session._is_connected)
+                self._workspace.set_connected(self._session.is_connected)
+                self._on_connection_state_changed(self._session.is_connected)
                 self._session.emit_current_screen()
 
             # Wrap once in a scroll area — kept alive as self._scroll so the

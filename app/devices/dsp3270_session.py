@@ -78,6 +78,8 @@ class Tn3270Session(QObject):
         self._running: bool = False
         self._connect_enabled: bool = False
         self._is_connected: bool = False
+        self._state_lock = threading.Lock()
+        self._disconnect_generation = 0
         self._thread: Optional[threading.Thread] = None
         self._input_queue: queue.Queue = queue.Queue()
         self._insert_mode: bool = False
@@ -96,91 +98,160 @@ class Tn3270Session(QObject):
         self._is_connected = connected
         self.connected_changed.emit(connected)
 
+    @property
+    def is_connected(self) -> bool:
+        return self._is_connected
+
     def start(self, host: str, port: int, devnum: str) -> None:
-        self._host = host
-        self._port = port
-        self._devnum = devnum
-        self._running = True
-        self._connect_enabled = True
-        self._thread = threading.Thread(
-            target=self._run, daemon=True, name=f"Tn3270:{devnum}:{port}"
-        )
-        self._thread.start()
+        thread: Optional[threading.Thread] = None
+        with self._state_lock:
+            self._host = host
+            self._port = port
+            self._devnum = devnum
+            self._running = True
+            self._connect_enabled = True
+            if self._thread is not None and self._thread.is_alive():
+                return
+            thread = threading.Thread(
+                target=self._run, daemon=True, name=f"Tn3270:{devnum}:{port}"
+            )
+            self._thread = thread
+        thread.start()
 
     def connect_session(self) -> None:
-        self._running = True
-        self._connect_enabled = True
-        if self._thread is None or not self._thread.is_alive():
-            self._thread = threading.Thread(
-                target=self._run, daemon=True, name=f"Tn3270:{self._devnum}:{self._port}"
-            )
-            self._thread.start()
+        with self._state_lock:
+            self._running = True
+            self._connect_enabled = True
+            should_start = self._thread is None or not self._thread.is_alive()
+        if should_start:
+            self.start(self._host, self._port, self._devnum)
 
     def disconnect_session(self) -> None:
-        self._connect_enabled = False
+        sock = self._detach_socket(disable_connect=True, stop_running=False)
+        self._clear_pending_actions()
         self._set_connected(False)
-        if self._sock:
-            try:
-                self._sock.close()
-            except Exception:
-                pass
-            finally:
-                self._sock = None
+        self._close_socket(sock)
 
     def stop(self) -> None:
-        self._running = False
-        self._connect_enabled = False
+        sock = self._detach_socket(disable_connect=True, stop_running=True)
+        self._clear_pending_actions()
         self._set_connected(False)
-        if self._sock:
-            try:
-                self._sock.close()
-            except Exception:
-                pass
-            finally:
-                self._sock = None
+        self._close_socket(sock)
 
     def join(self, timeout: float = 1.0) -> None:
         if self._thread and self._thread.is_alive():
             self._thread.join(timeout=timeout)
 
     def enqueue_action(self, action: str, data: bytes) -> None:
+        with self._state_lock:
+            if not self._running or not self._connect_enabled or self._sock is None:
+                return
         self._input_queue.put((action, data))
 
     def emit_current_screen(self) -> None:
         self._emit_update()
 
-    def _run(self) -> None:
-        while self._running:
-            if not self._connect_enabled:
-                time.sleep(0.1)
-                continue
-            try:
-                self._connect()
-                self._set_connected(True)
-                self._session_loop()
-            except EOFError:
-                logger.debug("TN3270 %s:%s - connection closed", self._host, self._port)
-            except Exception as exc:
-                logger.debug("TN3270 %s:%s - %s", self._host, self._port, exc)
-            self._set_connected(False)
-            if self._running:
-                time.sleep(2.0)
+    def _detach_socket(self, *, disable_connect: bool, stop_running: bool) -> Optional[socket.socket]:
+        with self._state_lock:
+            if stop_running:
+                self._running = False
+            if disable_connect:
+                self._connect_enabled = False
+                self._disconnect_generation += 1
+            sock = self._sock
+            self._sock = None
+            return sock
 
-    def _connect(self) -> None:
-        self._sock = socket.create_connection((self._host, self._port), timeout=10)
-        self._sock.settimeout(None)
+    def _close_socket(self, sock: Optional[socket.socket]) -> None:
+        if sock is None:
+            return
+        try:
+            sock.close()
+        except Exception:
+            pass
+
+    def _register_socket(self, sock: socket.socket, generation: int) -> bool:
+        with self._state_lock:
+            if (
+                not self._running
+                or not self._connect_enabled
+                or self._disconnect_generation != generation
+            ):
+                return False
+            self._sock = sock
+            return True
+
+    def _release_socket(self, sock: socket.socket) -> None:
+        with self._state_lock:
+            if self._sock is sock:
+                self._sock = None
+
+    def _thread_state(self) -> tuple[bool, bool, int]:
+        with self._state_lock:
+            return self._running, self._connect_enabled, self._disconnect_generation
+
+    def _clear_pending_actions(self) -> None:
+        while True:
+            try:
+                self._input_queue.get_nowait()
+            except queue.Empty:
+                return
+
+    def _run(self) -> None:
+        try:
+            while True:
+                running, connect_enabled, generation = self._thread_state()
+                if not running:
+                    break
+                if not connect_enabled:
+                    time.sleep(0.1)
+                    continue
+                try:
+                    self._connect(generation)
+                    self._set_connected(True)
+                    self._session_loop()
+                except EOFError:
+                    logger.debug("TN3270 %s:%s - connection closed", self._host, self._port)
+                except Exception as exc:
+                    logger.debug("TN3270 %s:%s - %s", self._host, self._port, exc)
+                finally:
+                    self._set_connected(False)
+                    sock = self._detach_socket(disable_connect=False, stop_running=False)
+                    self._close_socket(sock)
+                running, connect_enabled, _ = self._thread_state()
+                if running and connect_enabled:
+                    time.sleep(2.0)
+        finally:
+            with self._state_lock:
+                if self._thread is threading.current_thread():
+                    self._thread = None
+
+    def _connect(self, generation: int) -> None:
+        sock = socket.create_connection((self._host, self._port), timeout=10)
+        try:
+            if not self._register_socket(sock, generation):
+                sock.close()
+                raise EOFError("Session connect cancelled")
+            sock.settimeout(None)
+        except Exception:
+            self._close_socket(sock)
+            raise
         self._buf.clear()
         self._iac_buf.clear()
         self._records.clear()
         self._client_opts.clear()
         self._host_opts.clear()
         self._tn3270_ready = False
+        self._clear_pending_actions()
         self._negotiate()
 
     def _negotiate(self) -> None:
         deadline = time.monotonic() + 15.0
         while not self._tn3270_ready and time.monotonic() < deadline:
-            chunk = self._sock.recv(4096)
+            sock = self._sock
+            if sock is None:
+                raise EOFError("Connection closed during negotiation")
+            chunk = sock.recv(4096)
             if not chunk:
                 raise EOFError("Connection closed during negotiation")
             for byte in chunk:
@@ -194,8 +265,18 @@ class Tn3270Session(QObject):
         return needed_client.issubset(self._client_opts) and needed_host.issubset(self._host_opts)
 
     def _session_loop(self) -> None:
-        self._sock.settimeout(0.005)
-        while self._running:
+        sock = self._sock
+        if sock is None:
+            raise EOFError("Connection closed before session loop")
+        sock.settimeout(0.005)
+        while True:
+            running, connect_enabled, _ = self._thread_state()
+            if not running or not connect_enabled:
+                break
+            with self._state_lock:
+                owns_socket = self._sock is sock
+            if not owns_socket:
+                break
             while not self._input_queue.empty():
                 try:
                     action, data = self._input_queue.get_nowait()
@@ -204,7 +285,7 @@ class Tn3270Session(QObject):
                     break
 
             try:
-                chunk = self._sock.recv(4096)
+                chunk = sock.recv(4096)
                 if not chunk:
                     raise EOFError
                 for byte in chunk:
@@ -285,9 +366,10 @@ class Tn3270Session(QObject):
                 self._tn3270_ready = True
 
     def _send_raw(self, data: bytes) -> None:
-        if self._sock:
+        sock = self._sock
+        if sock:
             try:
-                self._sock.sendall(data)
+                sock.sendall(data)
             except Exception as exc:
                 logger.debug("Send error: %s", exc)
 
