@@ -15,7 +15,7 @@ from typing import Optional, Callable
 
 from PySide6.QtWidgets import QWidget, QLabel, QVBoxLayout
 from PySide6.QtGui import QPainter, QColor
-from PySide6.QtCore import QRect, Qt
+from PySide6.QtCore import QRect, Qt, QTimer
 
 from .theme import BUTTON_HEIGHT  # re-exported for backwards compatibility
 
@@ -72,6 +72,10 @@ _STATE_ON_COLORS = (
     QColor(176, 255, 176),
     QColor(224, 224, 144),
 )
+ROOM_LIGHT_REPAINT_MS = 33
+ROOM_LIGHT_FADE_ON_S = 0.08
+ROOM_LIGHT_FADE_OFF_S = 0.24
+ROOM_ACTIVITY_HOLD_S = 0.10
 
 
 class DeviceBase(ABC):
@@ -117,6 +121,10 @@ class DeviceBase(ABC):
         self._room_device_info: Optional[dict] = None
         self._last_room_activity_at: float = 0.0
         self._room_repaint_callback: Optional[Callable] = None
+        self._room_light_display_levels: list[float] = []
+        self._room_light_target_levels: list[float] = []
+        self._room_light_last_update_at: float = time.monotonic()
+        self._room_light_repaint_scheduled = False
 
     def _default_label(self) -> str:
         if self.devnum:
@@ -152,20 +160,35 @@ class DeviceBase(ABC):
     def request_room_repaint(self) -> None:
         """Ask the room widget to repaint this device's slot immediately."""
         if self._room_repaint_callback is not None:
-            self._room_repaint_callback()
+            try:
+                self._room_repaint_callback()
+            except (ReferenceError, RuntimeError):
+                self._room_repaint_callback = None
 
     def mark_room_activity(self) -> None:
         """Record recent device activity for transient lamp pulses."""
         self._last_room_activity_at = time.monotonic()
 
-    def room_activity_level(self, decay_s: float = 1.2) -> float:
-        """Return a 0..1 intensity for recent activity."""
+    def room_light_level(self, value: bool | float | int) -> float:
+        """Normalize a lamp target value to the shared 0..1 scale."""
+        return max(0.0, min(1.0, float(value)))
+
+    def room_state_light(self, active: bool) -> float:
+        """Return the shared lamp level for a binary device state."""
+        return self.room_light_level(1.0 if active else 0.0)
+
+    def room_connected_light(self) -> float:
+        """Return the shared lamp level for Hercules connectivity."""
+        return self.room_state_light(self.room_device_info() is not None)
+
+    def room_activity_level(self, hold_s: float = ROOM_ACTIVITY_HOLD_S) -> float:
+        """Return the target intensity for the activity lamp after recent activity."""
         if self._last_room_activity_at <= 0.0:
             return 0.0
         age = time.monotonic() - self._last_room_activity_at
-        if age >= decay_s:
+        if age >= hold_s:
             return 0.0
-        return max(0.0, 1.0 - (age / decay_s))
+        return self.room_state_light(True)
 
     def room_light_levels(self) -> Optional[list[float]]:
         """
@@ -174,11 +197,95 @@ class DeviceBase(ABC):
         """
         return None
 
+    def room_light_on_colors(self) -> Optional[list[QColor]]:
+        """Return the fully-lit color for each room lamp."""
+        return list(_STATE_ON_COLORS)
+
+    def room_light_fade_on_durations(self) -> Optional[list[float]]:
+        """Return optional per-lamp fade-in durations in seconds."""
+        return None
+
+    def room_light_fade_off_durations(self) -> Optional[list[float]]:
+        """Return optional per-lamp fade-off durations in seconds."""
+        return None
+
+    def _room_light_duration(self, overrides: Optional[list[float]], index: int, default: float) -> float:
+        if not overrides or index >= len(overrides):
+            return default
+        try:
+            return max(0.0, float(overrides[index]))
+        except (TypeError, ValueError):
+            return default
+
+    def _room_light_off_color(self, on_color: QColor) -> QColor:
+        return QColor(
+            on_color.red() // 4 + 16,
+            on_color.green() // 4 + 16,
+            on_color.blue() // 4 + 16,
+        )
+
+    def _blend_room_light_color(self, on_color: QColor, level: float) -> QColor:
+        off_color = self._room_light_off_color(on_color)
+        return QColor(
+            int(off_color.red() + (on_color.red() - off_color.red()) * level),
+            int(off_color.green() + (on_color.green() - off_color.green()) * level),
+            int(off_color.blue() + (on_color.blue() - off_color.blue()) * level),
+        )
+
+    def _advance_room_light_animation(self, target_levels: list[float]) -> tuple[list[float], bool]:
+        now = time.monotonic()
+        elapsed = max(0.0, now - self._room_light_last_update_at)
+        self._room_light_last_update_at = now
+        max_frame_s = ROOM_LIGHT_REPAINT_MS / 1000.0
+        fade_on_durations = self.room_light_fade_on_durations()
+        fade_off_durations = self.room_light_fade_off_durations()
+
+        targets = [max(0.0, min(1.0, float(level))) for level in target_levels]
+        if len(self._room_light_display_levels) != len(targets):
+            self._room_light_display_levels = targets[:]
+            self._room_light_target_levels = targets[:]
+            return self._room_light_display_levels, False
+
+        if targets != self._room_light_target_levels:
+            elapsed = min(elapsed, max_frame_s)
+        self._room_light_target_levels = targets[:]
+
+        animating = False
+        updated_levels: list[float] = []
+        for index, (current, target) in enumerate(zip(self._room_light_display_levels, targets)):
+            if target > current:
+                duration_s = self._room_light_duration(fade_on_durations, index, ROOM_LIGHT_FADE_ON_S)
+            else:
+                duration_s = self._room_light_duration(fade_off_durations, index, ROOM_LIGHT_FADE_OFF_S)
+            step = 1.0 if duration_s <= 0.0 else min(1.0, elapsed / duration_s)
+            next_level = current + (target - current) * step
+            if abs(target - next_level) <= 0.001:
+                next_level = target
+            else:
+                animating = True
+            updated_levels.append(next_level)
+
+        self._room_light_display_levels = updated_levels
+        return updated_levels, animating
+
+    def _schedule_room_light_repaint(self) -> None:
+        if self._room_repaint_callback is None or self._room_light_repaint_scheduled:
+            return
+
+        self._room_light_repaint_scheduled = True
+
+        def _repaint() -> None:
+            self._room_light_repaint_scheduled = False
+            self.request_room_repaint()
+
+        QTimer.singleShot(ROOM_LIGHT_REPAINT_MS, _repaint)
+
     def draw_room_lights(self, painter: QPainter, rect: QRect) -> None:
         """Draw Jason-style square room lights when configured by the device."""
         origin = self.room_light_origin
         levels = self.room_light_levels()
-        if origin is None or not levels:
+        colors = self.room_light_on_colors()
+        if origin is None or not levels or not colors:
             return
 
         # All lights off when Hercules is disconnected
@@ -186,19 +293,11 @@ class DeviceBase(ABC):
             levels = [0.0] * len(levels)
 
         dx = (STATE_PANEL_W - 1) // 4
+        display_levels, animating = self._advance_room_light_animation(levels)
         painter.save()
-        for i, on_color in enumerate(_STATE_ON_COLORS):
-            level = max(0.0, min(1.0, float(levels[i] if i < len(levels) else 0.0)))
-            off_color = QColor(
-                on_color.red() // 4 + 16,
-                on_color.green() // 4 + 16,
-                on_color.blue() // 4 + 16,
-            )
-            color = QColor(
-                int(off_color.red() + (on_color.red() - off_color.red()) * level),
-                int(off_color.green() + (on_color.green() - off_color.green()) * level),
-                int(off_color.blue() + (on_color.blue() - off_color.blue()) * level),
-            )
+        for i, on_color in enumerate(colors):
+            level = display_levels[i] if i < len(display_levels) else 0.0
+            color = self._blend_room_light_color(on_color, level)
             painter.fillRect(
                 rect.left() + origin[0] + i * dx + STATE_LIGHT_INSET,
                 rect.top() + origin[1] + STATE_LIGHT_INSET,
@@ -207,6 +306,8 @@ class DeviceBase(ABC):
                 color,
             )
         painter.restore()
+        if animating:
+            self._schedule_room_light_repaint()
 
     def poll(self, api_client) -> None:
         """

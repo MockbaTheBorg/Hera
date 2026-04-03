@@ -118,9 +118,8 @@ class Pch3525Device(BaseCardDeckDevice):
             )
 
     def room_light_levels(self) -> Optional[list[float]]:
-        connected = 1.0 if self.room_device_info() is not None else 0.0
-        loaded = 1.0 if (self._deck_view is not None and bool(self._deck_view.lines)) else 0.0
-        return [connected, self.room_activity_level(), 0.0, loaded]
+        loaded = self.room_state_light(self._deck_view is not None and bool(self._deck_view.lines))
+        return [self.room_connected_light(), self.room_activity_level(), self.room_state_light(False), loaded]
 
     def _looks_like_separator_card(self, line: str) -> bool:
         stripped = line.rstrip()

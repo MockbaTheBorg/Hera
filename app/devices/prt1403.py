@@ -491,10 +491,9 @@ class Prt1403Device(DeviceBase):
     def room_light_levels(self) -> Optional[list[float]]:
         if self.room_light_origin is None:
             return None
-        connected = 1.0 if self.room_device_info() is not None else 0.0
-        pending = 1.0 if self._pending_command else 0.0
-        buffered = 1.0 if (self._all_lines or self._queued_lines) else 0.0
-        return [connected, self.room_activity_level(), pending, buffered]
+        pending = self.room_state_light(bool(self._pending_command))
+        buffered = self.room_state_light(bool(self._all_lines or self._queued_lines))
+        return [self.room_connected_light(), self.room_activity_level(), pending, buffered]
 
     def _do_connect(self) -> None:
         self._reader.connect_socket()

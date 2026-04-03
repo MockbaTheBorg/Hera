@@ -46,9 +46,6 @@ from ..device_base import (
     DeviceBase,
     ButtonDef,
     DeviceContext,
-    STATE_PANEL_W,
-    STATE_LIGHT_INSET,
-    STATE_LIGHT_SIZE,
 )
 from ..theme import BUTTON_HEIGHT, button_style
 from .media_common import (
@@ -165,6 +162,10 @@ class TapeDevice(DeviceBase):
         self._invalidate_assignment_cache()
         if loaded is not None:
             self._loaded = loaded
+            if not loaded:
+                self._protected = False
+                self._display = ""
+                self._vol_label = ""
             self._apply_button_states(loaded)
         self._refresh_output(client)
 
@@ -414,32 +415,17 @@ class TapeDevice(DeviceBase):
             )
             painter.restore()
 
-    def draw_room_lights(self, painter: QPainter, rect: QRect) -> None:
-        super().draw_room_lights(painter, rect)
-        origin = self.room_light_origin
-        if origin is None or self.room_device_info() is None:
-            return
-
-        # Fifth lamp: tape write mode. Red = read-only, green = writable.
-        on_color = QColor(255, 96, 96) if self._protected else QColor(96, 255, 96)
-        off_color = QColor(
-            on_color.red() // 4 + 16,
-            on_color.green() // 4 + 16,
-            on_color.blue() // 4 + 16,
-        )
-        color = off_color if not self._loaded else on_color
-        painter.save()
-        painter.fillRect(
-            rect.left() + origin[0] + STATE_PANEL_W + STATE_LIGHT_INSET - 1,
-            rect.top() + origin[1] + STATE_LIGHT_INSET,
-            STATE_LIGHT_SIZE,
-            STATE_LIGHT_SIZE,
-            color,
-        )
-        painter.restore()
+    def room_light_on_colors(self) -> Optional[list[QColor]]:
+        mode_color = QColor(255, 96, 96) if self._protected else QColor(96, 255, 96)
+        return [
+            QColor(255, 176, 176),
+            QColor(176, 255, 176),
+            QColor(176, 255, 176),
+            QColor(224, 224, 144),
+            mode_color,
+        ]
 
     def room_light_levels(self) -> Optional[list[float]]:
-        connected = 1.0 if self.room_device_info() is not None else 0.0
-        protected = 1.0 if self._protected else 0.0
-        loaded = 1.0 if self._loaded else 0.0
-        return [connected, self.room_activity_level(), protected, loaded]
+        protected = self.room_state_light(self._protected)
+        loaded = self.room_state_light(self._loaded)
+        return [self.room_connected_light(), self.room_activity_level(), protected, loaded, loaded]

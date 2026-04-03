@@ -193,5 +193,9 @@ class DasdDevice(DeviceBase):
             painter.restore()
 
     def room_light_levels(self) -> Optional[list[float]]:
-        connected = 1.0 if self.room_device_info() is not None else 0.0
-        return [connected, self.room_activity_level(), 0.0, 1.0 if self._mounted else 0.0]
+        return [
+            self.room_connected_light(),
+            self.room_activity_level(),
+            self.room_state_light(False),
+            self.room_state_light(self._mounted),
+        ]
