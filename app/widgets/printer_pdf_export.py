@@ -21,6 +21,9 @@ PAGE_H      = 792    # 11 inches
 PAGE_COLS   = 132
 PAGE_LINES  = 66
 TOP_MARGIN  = 72     # header / preprint area above text
+TEXT_X      = 43
+TEXT_RIGHT  = PAGE_W - 43
+TEXT_W      = TEXT_RIGHT - TEXT_X
 
 # ── Paper color palettes — (dark_rgb, light_rgb) tuples ─────────────────────
 # Matching prt1403 reference palette values.
@@ -116,7 +119,25 @@ def _draw_holes(pdf, color_name: str) -> None:
         pdf.circle(PAGE_W - 20, y, _FREE_HOLE_RADIUS, "FD")
 
 
-def _draw_page(pdf, lines: list, font_size: float, line_h: float, color_form: str, color_holes: str) -> None:
+def _char_spacing_for_page_width(pdf, font_size: float) -> float:
+    """Return character spacing needed for 132 columns to fill the printable width."""
+    pdf.set_font("prt1403Font", size=font_size)
+    sample = "0" * PAGE_COLS
+    base_width = pdf.get_string_width(sample)
+    if base_width <= 0 or PAGE_COLS <= 1:
+        return 0.0
+    return (TEXT_W - base_width) / (PAGE_COLS - 1)
+
+
+def _draw_page(
+    pdf,
+    lines: list,
+    font_size: float,
+    line_h: float,
+    color_form: str,
+    color_holes: str,
+    char_spacing: float,
+) -> None:
     """Render one page: background, holes, then text."""
     pdf.add_page()
     pdf.set_margins(0, 0, 0)
@@ -129,12 +150,13 @@ def _draw_page(pdf, lines: list, font_size: float, line_h: float, color_form: st
     # Baseline = (lineNr - 0.25) * line_h  ≡  (i + 0.75) * line_h  for i=0..65.
     # Lines 1-6 land in the white header zone; lines 7-66 in the banded area.
     pdf.set_font("prt1403Font", size=font_size)
+    pdf.set_char_spacing(char_spacing)
     pdf.set_text_color(0, 0, 0)
 
     for i, line in enumerate(lines[:PAGE_LINES]):
         text = line[:PAGE_COLS]
         if text:
-            pdf.text(43, (i + 0.75) * line_h, text)
+            pdf.text(TEXT_X, (i + 0.75) * line_h, text)
 
 
 def save_as_pdf(
@@ -184,6 +206,8 @@ def save_as_pdf(
         # Fallback: register Courier under our alias
         pdf.add_font("prt1403Font", style="", fname="Courier")
 
+    char_spacing = _char_spacing_for_page_width(pdf, font_size)
+
     # Split lines into pages of page_length each, honouring \x0C breaks
     pages: list[list[str]] = []
     current: list[str] = []
@@ -206,7 +230,7 @@ def save_as_pdf(
         pages = [[]]
 
     for page_lines in pages:
-        _draw_page(pdf, page_lines, font_size, line_h, color_form, color_holes)
+        _draw_page(pdf, page_lines, font_size, line_h, color_form, color_holes, char_spacing)
 
     pdf.output(path)
     logger.debug("PDF written: %s (%d pages, %d lines)", path, len(pages), len(lines))

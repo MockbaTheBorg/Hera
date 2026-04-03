@@ -288,6 +288,7 @@ class Prt1403Device(DeviceBase):
             ButtonDef(label="Setup",   callback=self._do_setup),
             ButtonDef(label="Save",    callback=self._do_save),
             ButtonDef(label="Discard", callback=self._do_discard),
+            ButtonDef(label="Test",    callback=self._do_test),
             ButtonDef(label="Socket", is_label=True),
             ButtonDef(
                 label="Connect",
@@ -448,6 +449,17 @@ class Prt1403Device(DeviceBase):
         if self._queued_lines:
             self._schedule_next_line()
 
+    def _build_test_printout_lines(self) -> list[str]:
+        columns = MINI_SCREEN_COLS
+        printer_name = "IBM 3215 Console Printer" if self._is_3215 else "IBM 1403 Line Printer"
+        header = f"HERA PRINTER TEST  {printer_name}  DEVICE {self._devnum or 'UNKNOWN'}"
+        note = "The ruler below should end at column 132 with the right border visible."
+        boundary = "|" + ("-" * (columns - 2)) + "|"
+        tens = "".join(str((column // 10) % 10) if column >= 10 else " " for column in range(1, columns + 1))
+        ones = "".join(str(column % 10) for column in range(1, columns + 1))
+        sample = "".join(chr(ord("A") + ((column - 1) % 26)) for column in range(1, columns + 1))
+        return [header, note, boundary, tens, ones, sample, boundary]
+
     # ------------------------------------------------------------------
     # Socket line handler
     # ------------------------------------------------------------------
@@ -548,6 +560,12 @@ class Prt1403Device(DeviceBase):
         except Exception as exc:
             logger.error("Failed to save PDF: %s", exc)
             return False
+
+    def _do_test(self) -> None:
+        if self._all_lines or self._queued_lines:
+            self._enqueue_line("")
+        for line in self._build_test_printout_lines():
+            self._enqueue_line(line)
 
     def _do_discard(self) -> None:
         # Immediate clear when buffer is empty or already saved
