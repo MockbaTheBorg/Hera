@@ -38,7 +38,7 @@ class Rdr3505Device(BaseCardDeckDevice):
     bitmap_name    = "3505.png"
     room_light_origin = (135, 25)
     config_prefix = "rdr"
-    default_color = "BEIGE"
+    default_color = "PAPER"
     default_language = "JCL"
     initial_mode = "editor"
     read_only = False

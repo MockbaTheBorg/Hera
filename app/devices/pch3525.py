@@ -33,7 +33,7 @@ class Pch3525Device(BaseCardDeckDevice):
     bitmap_name    = "3525.png"
     room_light_origin = (79, 25)
     config_prefix = "pch"
-    default_color = "YELLOW"
+    default_color = "PAPER"
     default_language = "JCL"
     initial_mode = "card"
     read_only = True

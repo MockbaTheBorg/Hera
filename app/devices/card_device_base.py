@@ -28,7 +28,7 @@ class CardSetupValues:
 class BaseCardDeckDevice(DeviceBase):
     """Shared behavior for editable/read-only card deck devices."""
 
-    default_color = "BEIGE"
+    default_color = "PAPER"
     default_language = "JCL"
     config_prefix = ""
     initial_mode = "editor"

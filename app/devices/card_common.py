@@ -67,7 +67,7 @@ class CardWidget(QWidget):
 
         self._lines: list[str] = []
         self._current: int = 0
-        self._color: str = 'BEIGE'
+        self._color: str = 'PAPER'
 
         self._pos_label = QLabel("", self)
         self._pos_label.setAlignment(Qt.AlignCenter)
@@ -211,7 +211,7 @@ class CardDeckView(QWidget):
 
     def __init__(self, initial_mode: str = 'editor',
                  read_only: bool = False,
-                 color: str = 'BEIGE',
+                 color: str = 'PAPER',
                  lang: str = 'JCL',
                  auto_number: bool = False,
                  parent=None):
