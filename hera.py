@@ -135,16 +135,6 @@ def build_device_list(api: HerculesAPI, registry: DeviceRegistry, config=None):
             )
         )
 
-    order = getattr(config, "device_order", []) if config else []
-    if order:
-        order_index = {cls: i for i, cls in enumerate(order)}
-        n = len(order)
-        devices = sorted(
-            enumerate(devices),
-            key=lambda iv: (order_index.get(iv[1].devclass, n), iv[0]),
-        )
-        devices = [d for _, d in devices]
-
     return devices
 
 

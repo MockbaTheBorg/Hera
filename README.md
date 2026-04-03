@@ -53,6 +53,7 @@ python hera.py --host 192.168.1.10 --port 8081
 ## Notes
 
 - Hera saves its settings to `~/.config/hera/hera.conf`.
+- Use `File -> Preferences` to edit saved connection, appearance, and window settings from the UI.
 - Command-line options override values stored in the config file.
 - The Hercules REST API must be reachable before starting Hera; otherwise the device panels will show as disconnected.
 

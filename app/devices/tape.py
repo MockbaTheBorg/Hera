@@ -124,6 +124,11 @@ class TapeDevice(DeviceBase):
         px = QPixmap(path)
         return None if px.isNull() else px
 
+    def on_bitmap_theme_changed(self) -> None:
+        self._prot_pixmap = self._load_pixmap("2401prot.png")
+        self._unpr_pixmap = self._load_pixmap("2401unpr.png")
+        self.request_room_repaint()
+
     def _parent_widget(self) -> Optional[QWidget]:
         return self._output.window() if self._output else None
 

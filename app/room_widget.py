@@ -21,7 +21,7 @@ from PySide6.QtGui import (
 from PySide6.QtCore import Qt, Signal, QRect, QSize, QEvent
 
 from .device_base import DeviceBase
-from .theme import ROOM_CONTENT_HEIGHT, ROOM_HEIGHT, ROOM_BG
+from .theme import ROOM_CONTENT_HEIGHT, ROOM_HEIGHT, room_bg_color
 LABEL_HEIGHT = 28                            # Height of the label tab above each device
 SELECTED_COLOR = QColor(96, 232, 96)         # Green highlight for selected device
 LABEL_DEFAULT_COLOR = QColor(210, 210, 210) # Default label tab background
@@ -35,11 +35,12 @@ class DeviceSlot(QWidget):
 
     clicked = Signal(int)  # Emits slot index when clicked
 
-    def __init__(self, index: int, device: DeviceBase, parent=None):
+    def __init__(self, index: int, device: DeviceBase, background_color: QColor, parent=None):
         super().__init__(parent)
         self.index = index
         self.device = device
         self.selected = False
+        self._background_color = QColor(background_color)
 
         self._pixmap: Optional[QPixmap] = None
         self._load_bitmap()
@@ -59,6 +60,10 @@ class DeviceSlot(QWidget):
 
     def set_selected(self, selected: bool):
         self.selected = selected
+        self.update()
+
+    def set_background_color(self, color: QColor) -> None:
+        self._background_color = QColor(color)
         self.update()
 
     def paintEvent(self, event):
@@ -88,7 +93,7 @@ class DeviceSlot(QWidget):
 
         # --- Room background (below label) ---
         body_rect = QRect(0, LABEL_HEIGHT, w, h - LABEL_HEIGHT)
-        painter.fillRect(body_rect, QBrush(QColor(*ROOM_BG)))
+        painter.fillRect(body_rect, QBrush(self._background_color))
 
         # --- Device bitmap (bottom-aligned within body) ---
         if self._pixmap:
@@ -138,6 +143,7 @@ class RoomWidget(QWidget):
         self._devices: list[DeviceBase] = []
         self._slots: list[DeviceSlot] = []
         self._selected_index: int = -1
+        self._background_color = room_bg_color()
 
         # Scroll area fills the widget
         self._scroll = QScrollArea(self)
@@ -157,10 +163,7 @@ class RoomWidget(QWidget):
         self._scroll.setWidget(self._container)
 
         # Room background
-        palette = self._scroll.viewport().palette()
-        palette.setColor(QPalette.Window, QColor(*ROOM_BG))
-        self._scroll.viewport().setPalette(palette)
-        self._scroll.viewport().setAutoFillBackground(True)
+        self._apply_viewport_background()
 
         # Intercept wheel events on the viewport before QScrollArea handles them
         self._scroll.viewport().installEventFilter(self)
@@ -168,6 +171,20 @@ class RoomWidget(QWidget):
         outer = QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
         outer.addWidget(self._scroll)
+
+    def _apply_viewport_background(self) -> None:
+        palette = self._scroll.viewport().palette()
+        palette.setColor(QPalette.Window, self._background_color)
+        self._scroll.viewport().setPalette(palette)
+        self._scroll.viewport().setAutoFillBackground(True)
+
+    def set_room_background(self, color: QColor | str) -> None:
+        self._background_color = QColor(color)
+        self._apply_viewport_background()
+        for slot in self._slots:
+            slot.set_background_color(self._background_color)
+        self._scroll.viewport().update()
+        self._container.update()
 
     def _clear_slots(self) -> None:
         for slot in self._slots:
@@ -183,8 +200,15 @@ class RoomWidget(QWidget):
         self._slots[index].set_selected(True)
         self.device_selected.emit(index)
 
-    def set_devices(self, devices: list[DeviceBase]):
+    def set_devices(
+        self,
+        devices: list[DeviceBase],
+        *,
+        selected_device: Optional[DeviceBase] = None,
+        emit_selection: bool = True,
+    ):
         """Populate the room with a list of device instances."""
+        scroll_value = self._scroll.horizontalScrollBar().value()
         self._clear_slots()
         self._devices = devices
         self._selected_index = -1
@@ -193,7 +217,7 @@ class RoomWidget(QWidget):
 
         # Create a slot for each device
         for i, device in enumerate(devices):
-            slot = DeviceSlot(i, device, self._container)
+            slot = DeviceSlot(i, device, self._background_color, self._container)
             slot.clicked.connect(self._on_slot_clicked)
             self._layout.addWidget(slot)
             self._slots.append(slot)
@@ -201,10 +225,27 @@ class RoomWidget(QWidget):
 
         self._layout.addStretch()
         self._update_container_width()
+        self._scroll.horizontalScrollBar().setValue(scroll_value)
 
-        # Auto-select first device
-        if self._slots:
-            self._on_slot_clicked(0)
+        if not self._slots:
+            return
+
+        selected_index = -1
+        if selected_device is not None:
+            try:
+                selected_index = self._devices.index(selected_device)
+            except ValueError:
+                selected_index = -1
+
+        if selected_index < 0:
+            selected_index = 0
+
+        if emit_selection:
+            self._on_slot_clicked(selected_index)
+            return
+
+        self._selected_index = selected_index
+        self._slots[selected_index].set_selected(True)
 
     def _update_container_width(self):
         total = sum(s.width() + 2 for s in self._slots) + 8

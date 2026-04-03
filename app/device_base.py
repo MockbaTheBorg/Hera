@@ -149,6 +149,10 @@ class DeviceBase(ABC):
         """
         pass
 
+    def on_bitmap_theme_changed(self) -> None:
+        """Refresh any cached theme-specific room assets after a bitmap theme change."""
+        pass
+
     def set_room_device_info(self, info: Optional[dict]) -> None:
         """Cache the latest REST device row for room-light decisions."""
         self._room_device_info = info

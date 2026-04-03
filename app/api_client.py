@@ -21,6 +21,9 @@ class HerculesAPI:
         self.timeout = timeout
         self.syslog_feed = SyslogFeed(self)
 
+    def set_base_url(self, base_url: str) -> None:
+        self.base_url = base_url.rstrip("/")
+
     def _get(self, endpoint: str, params: dict = None) -> Optional[dict]:
         try:
             url = f"{self.base_url}/{endpoint}"

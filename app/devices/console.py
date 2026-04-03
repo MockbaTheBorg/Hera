@@ -31,7 +31,7 @@ MINI_SCREEN_H = 55
 # Mini-screen content window — 80×24 matches a 3270 model 2 screen.
 MINI_SCREEN_LINES = 25
 MINI_SCREEN_COLS  = 80
-MINI_SCREEN_OPACITY = 0.8   # 0.0 = fully transparent, 1.0 = fully opaque
+MINI_SCREEN_OPACITY = 0.5   # 0.0 = fully transparent, 1.0 = fully opaque
 MINI_SCREEN_BRIGHTNESS_BOOST = 1.35
 
 

@@ -9,6 +9,7 @@ Command-line arguments override config file values.
 
 import argparse
 import configparser
+import re
 from pathlib import Path
 
 VERSION_MAJOR = 1
@@ -16,6 +17,7 @@ VERSION_MINOR = 0
 
 CONFIG_DIR = Path.home() / ".config" / "hera"
 CONFIG_FILE = CONFIG_DIR / "hera.conf"
+BITMAPS_DIR = Path(__file__).resolve().parent / "bitmaps"
 
 DEFAULTS = {
     "host": "127.0.0.1",
@@ -27,7 +29,60 @@ DEFAULTS = {
     "window_width": "1024",
     "window_height": "768",
     "bitmap_theme": "blue",
+    "room_background": "#9da89b",
 }
+
+_HEX_COLOR_RE = re.compile(r"^#?[0-9a-fA-F]{6}$")
+
+
+def available_bitmap_themes() -> list[str]:
+    """Return bitmap theme directories that contain a full device set."""
+    if BITMAPS_DIR.exists():
+        themes = sorted(
+            child.name
+            for child in BITMAPS_DIR.iterdir()
+            if child.is_dir() and (child / "unknown.png").exists()
+        )
+        if themes:
+            return themes
+    return [DEFAULTS["bitmap_theme"]]
+
+
+def normalize_bitmap_theme(theme: str) -> str:
+    """Return a valid bitmap theme name, falling back to the configured default."""
+    candidate = theme.strip().lower()
+    themes = available_bitmap_themes()
+    if candidate in themes:
+        return candidate
+    default_theme = DEFAULTS["bitmap_theme"]
+    return default_theme if default_theme in themes else themes[0]
+
+
+def parse_device_order(raw_order: str) -> list[str]:
+    """Parse a comma-separated device order into normalized devclass names."""
+    return [token.upper() for token in (item.strip() for item in raw_order.split(",")) if token]
+
+
+def format_device_order(device_order: list[str]) -> str:
+    """Format normalized device classes for config persistence."""
+    return ",".join(item.upper() for item in device_order if item.strip())
+
+
+def is_valid_room_background(color: str) -> bool:
+    """Return True if the room background is a valid 6-digit hex color."""
+    return bool(_HEX_COLOR_RE.match(color.strip()))
+
+
+def normalize_room_background(color: str) -> str:
+    """Return a normalized #rrggbb color string for the room background."""
+    candidate = color.strip()
+    if not candidate:
+        return DEFAULTS["room_background"]
+    if not is_valid_room_background(candidate):
+        return DEFAULTS["room_background"]
+    if not candidate.startswith("#"):
+        candidate = f"#{candidate}"
+    return candidate.lower()
 
 
 class Config:
@@ -41,6 +96,7 @@ class Config:
         self.window_width: int = int(DEFAULTS["window_width"])
         self.window_height: int = int(DEFAULTS["window_height"])
         self.bitmap_theme: str = DEFAULTS["bitmap_theme"]
+        self.room_background: str = DEFAULTS["room_background"]
         self.device_order: list[str] = []  # e.g. ["CPU","CONSOLE","DSP","PRT"]
 
     @property
@@ -82,9 +138,12 @@ class Config:
         self.window_height = self._int_value(win, "height", self.window_height)
 
         app = parser["appearance"] if "appearance" in parser else {}
-        self.bitmap_theme = app.get("bitmap_theme", self.bitmap_theme)
+        self.bitmap_theme = normalize_bitmap_theme(app.get("bitmap_theme", self.bitmap_theme))
+        self.room_background = normalize_room_background(
+            app.get("room_background", self.room_background)
+        )
         raw_order = app.get("order", "")
-        self.device_order = [s.upper() for s in (t.strip() for t in raw_order.split(",")) if s]
+        self.device_order = parse_device_order(raw_order)
 
     def save(self):
         """Persist current settings to config file (preserves other sections like [devices])."""
@@ -104,8 +163,9 @@ class Config:
             "height": str(self.window_height),
         }
         parser["appearance"] = {
-            "bitmap_theme": self.bitmap_theme,
-            "order": ",".join(self.device_order),
+            "bitmap_theme": normalize_bitmap_theme(self.bitmap_theme),
+            "room_background": normalize_room_background(self.room_background),
+            "order": format_device_order(self.device_order),
         }
 
         with open(CONFIG_FILE, "w") as f:

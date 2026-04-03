@@ -67,7 +67,7 @@ _MINI_X = 21
 _MINI_Y = 7
 _MINI_W = 76
 _MINI_H = 55
-_MINI_OPACITY = 0.8   # 0.0 = fully transparent, 1.0 = fully opaque
+_MINI_OPACITY = 0.5   # 0.0 = fully transparent, 1.0 = fully opaque
 _MINI_BRIGHTNESS_BOOST = 1.6
 
 

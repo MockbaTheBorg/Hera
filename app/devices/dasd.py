@@ -117,6 +117,10 @@ class DasdDevice(DeviceBase):
             return None
         return px
 
+    def on_bitmap_theme_changed(self) -> None:
+        self._disc_pixmap = self._load_disc_pixmap()
+        self.request_room_repaint()
+
     # ── Polling ──────────────────────────────────────────────────────────────
 
     def poll(self, api_client) -> None:

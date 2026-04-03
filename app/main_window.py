@@ -18,17 +18,24 @@ import logging
 from typing import Optional
 
 from PySide6.QtWidgets import (
-    QMainWindow, QWidget, QVBoxLayout,
+    QDialog, QMainWindow, QWidget, QVBoxLayout,
     QStatusBar, QMessageBox, QLabel
 )
 from PySide6.QtCore import Qt, QTimer, QThread, Signal, QObject, Slot
 from PySide6.QtGui import QAction
 
-from .config import Config, VERSION_MAJOR, VERSION_MINOR
+from .config import (
+    Config,
+    VERSION_MAJOR,
+    VERSION_MINOR,
+    normalize_room_background,
+    parse_device_order,
+)
 from .api_client import HerculesAPI
 from .room_widget import RoomWidget
 from .device_area import DeviceArea
-from .device_base import DeviceBase
+from .device_base import DeviceBase, set_bitmap_theme
+from .preferences_dialog import PreferencesDialog
 
 logger = logging.getLogger(__name__)
 
@@ -54,6 +61,9 @@ class PollerWorker(QObject):
 
     def set_devices(self, devices: list[DeviceBase]):
         self._devices = devices
+
+    def reset_connection_state(self, connected: bool = False) -> None:
+        self._was_connected = connected
 
     @Slot()
     def run(self):
@@ -97,7 +107,8 @@ class MainWindow(QMainWindow):
         super().__init__()
         self._config = config
         self._api = api
-        self._devices = devices
+        self._base_devices = list(devices)
+        self._devices = self._sort_devices_by_config(self._base_devices)
         self._device_builder = device_builder  # callable() -> list[DeviceBase]
         self._active_device: Optional[DeviceBase] = None
         self._connected = False
@@ -113,7 +124,7 @@ class MainWindow(QMainWindow):
         self._restore_geometry()
 
         # Populate room
-        self._room.set_devices(devices)
+        self._room.set_devices(self._devices)
 
         # Initial version fetch
         self._fetch_version()
@@ -140,6 +151,12 @@ class MainWindow(QMainWindow):
 
         # File menu
         file_menu = menubar.addMenu("&File")
+        preferences_action = QAction("&Preferences", self)
+        preferences_action.setShortcut("Ctrl+,")
+        preferences_action.triggered.connect(self._show_preferences)
+        file_menu.addAction(preferences_action)
+        file_menu.addSeparator()
+
         quit_action = QAction("&Quit", self)
         quit_action.setShortcut("Ctrl+Q")
         quit_action.triggered.connect(self.close)
@@ -159,6 +176,7 @@ class MainWindow(QMainWindow):
         layout.setSpacing(0)
 
         self._room = RoomWidget()
+        self._room.set_room_background(self._config.room_background)
         self._room.device_selected.connect(self._on_device_selected)
         layout.addWidget(self._room)
 
@@ -195,6 +213,43 @@ class MainWindow(QMainWindow):
         self._poller.set_devices(self._devices)
         self._start_poll.emit()
 
+    def _sort_devices_by_config(self, devices: list[DeviceBase]) -> list[DeviceBase]:
+        order = self._config.device_order
+        if not order:
+            return list(devices)
+        order_index = {devclass: index for index, devclass in enumerate(order)}
+        default_index = len(order)
+        indexed_devices = sorted(
+            enumerate(devices),
+            key=lambda item: (order_index.get(item[1].devclass, default_index), item[0]),
+        )
+        return [device for _, device in indexed_devices]
+
+    def _refresh_room_from_current_devices(self) -> None:
+        selected_device = self._active_device
+        self._devices = self._sort_devices_by_config(self._base_devices)
+        self._poller.set_devices(self._devices)
+        self._room.set_devices(self._devices, selected_device=selected_device, emit_selection=False)
+
+    def _on_bitmap_theme_changed(self) -> None:
+        for device in self._base_devices:
+            try:
+                device.on_bitmap_theme_changed()
+            except Exception as exc:
+                logger.warning("Device bitmap theme refresh failed: %s", exc)
+
+    def _queue_rebuild(self) -> None:
+        if self._device_builder is None:
+            return
+        if self._poll_in_flight:
+            self._pending_rebuild = True
+            return
+        if not self._connected:
+            self._pending_rebuild = True
+            return
+        self._pending_rebuild = False
+        self._rebuild_devices()
+
     @Slot()
     def _on_poll_finished(self):
         self._poll_in_flight = False
@@ -221,6 +276,8 @@ class MainWindow(QMainWindow):
             ver = data.get("hercules_version", "")
             modes = ", ".join(data.get("modes", []))
             self._version_label.setText(f"Hercules {ver} | {modes}")
+        else:
+            self._version_label.clear()
 
     @Slot(int)
     def _on_device_selected(self, index: int):
@@ -263,12 +320,14 @@ class MainWindow(QMainWindow):
         self._device_area.show_placeholder()
         self._room.set_devices([])
 
-        old_devices = self._devices
+        old_devices = self._base_devices
+        self._base_devices = []
         self._devices = []
         self._poller.set_devices([])
         self._run_device_hook("cleanup", old_devices, log_message="Device cleanup failed during rebuild: %s")
 
-        self._devices = self._device_builder()
+        self._base_devices = self._device_builder()
+        self._devices = self._sort_devices_by_config(self._base_devices)
         self._poller.set_devices(self._devices)
         self._room.set_devices(self._devices)
 
@@ -291,6 +350,70 @@ class MainWindow(QMainWindow):
             "Targets SDL Hyperion Hercules via REST API.<br><br>"
             "Author: Mockba the Borg"
         )
+
+    def _show_preferences(self):
+        dialog = PreferencesDialog(self._config, self)
+        if dialog.exec() != QDialog.Accepted:
+            return
+
+        values = dialog.values()
+        endpoint_changed = (
+            values["host"] != self._config.host
+            or values["port"] != self._config.port
+        )
+        polling_changed = values["poll_interval"] != self._config.poll_interval
+        geometry_changed = any(
+            values[key] != getattr(self._config, key)
+            for key in ("window_x", "window_y", "window_width", "window_height")
+        )
+        theme_changed = values["bitmap_theme"] != self._config.bitmap_theme
+        room_background = normalize_room_background(values["room_background"])
+        room_background_changed = room_background != self._config.room_background
+        device_order = parse_device_order(values["device_order"])
+        order_changed = device_order != self._config.device_order
+
+        self._config.host = values["host"]
+        self._config.port = values["port"]
+        self._config.poll_interval = values["poll_interval"]
+        self._config.tapes_folder = values["tapes_folder"]
+        self._config.bitmap_theme = values["bitmap_theme"]
+        self._config.room_background = room_background
+        self._config.device_order = device_order
+        self._config.window_x = values["window_x"]
+        self._config.window_y = values["window_y"]
+        self._config.window_width = values["window_width"]
+        self._config.window_height = values["window_height"]
+        self._config.save()
+
+        if polling_changed:
+            self._timer.setInterval(max(1, int(self._config.poll_interval * 1000)))
+
+        if geometry_changed:
+            self.resize(self._config.window_width, self._config.window_height)
+            if self._config.window_x >= 0 and self._config.window_y >= 0:
+                self.move(self._config.window_x, self._config.window_y)
+
+        if theme_changed:
+            set_bitmap_theme(self._config.bitmap_theme)
+            self._on_bitmap_theme_changed()
+
+        if room_background_changed:
+            self._room.set_room_background(self._config.room_background)
+
+        if endpoint_changed:
+            self._api.set_base_url(self._config.api_base_url)
+            self._connected = self._api.test_connection()
+            self._poller.reset_connection_state(self._connected)
+            if self._connected:
+                self._update_status_connected()
+                self._fetch_version()
+                self._queue_rebuild()
+            else:
+                self._update_status_disconnected()
+                self._version_label.clear()
+                self._pending_rebuild = self._device_builder is not None
+        elif theme_changed or room_background_changed or order_changed:
+            self._refresh_room_from_current_devices()
 
     def closeEvent(self, event):
         self._shutting_down = True
