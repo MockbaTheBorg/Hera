@@ -22,6 +22,7 @@ from PySide6.QtWidgets import (
 from ..device_base import ButtonDef, DeviceContext
 from ..socket_reader import SocketLineReader as SocketReader
 from .card_device_base import BaseCardDeckDevice
+from .card_data import DEFAULT_LANGUAGE
 
 logger = logging.getLogger(__name__)
 
@@ -34,7 +35,7 @@ class Pch3525Device(BaseCardDeckDevice):
     room_light_origin = (79, 25)
     config_prefix = "pch"
     default_color = "PAPER"
-    default_language = "JCL"
+    default_language = DEFAULT_LANGUAGE
     initial_mode = "card"
     read_only = True
 

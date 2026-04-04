@@ -22,6 +22,7 @@ from PySide6.QtWidgets import (
 
 from ..device_base import ButtonDef, DeviceContext
 from .card_device_base import BaseCardDeckDevice
+from .card_data import DEFAULT_LANGUAGE, language_for_path
 
 logger = logging.getLogger(__name__)
 
@@ -39,7 +40,7 @@ class Rdr3505Device(BaseCardDeckDevice):
     room_light_origin = (135, 25)
     config_prefix = "rdr"
     default_color = "PAPER"
-    default_language = "JCL"
+    default_language = DEFAULT_LANGUAGE
     initial_mode = "editor"
     read_only = False
 
@@ -113,6 +114,10 @@ class Rdr3505Device(BaseCardDeckDevice):
         except Exception as exc:
             QMessageBox.critical(self._deck_view, "Load Error", str(exc))
             return
+        loaded_lang = language_for_path(path)
+        self._lang = loaded_lang
+        self._deck_view.set_language(loaded_lang)
+        self._set_persisted_setting(self._lang_key(), loaded_lang)
         # set_lines pads/truncates each line to 80 chars
         self._deck_view.set_lines(raw_lines)
         self._deck_view.changed = False

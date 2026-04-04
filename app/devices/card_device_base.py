@@ -13,7 +13,7 @@ from PySide6.QtWidgets import QFileDialog, QFrame, QMessageBox, QPushButton, QVB
 from ..device_base import DeviceBase, DeviceContext
 from ..theme import WORKSPACE_FRAME
 from .card_common import CardDeckView
-from .card_data import LANGUAGES, lang_ext
+from .card_data import DEFAULT_LANGUAGE, lang_ext, language_names
 from .card_setup import CardSetupDialog
 
 
@@ -29,7 +29,7 @@ class BaseCardDeckDevice(DeviceBase):
     """Shared behavior for editable/read-only card deck devices."""
 
     default_color = "PAPER"
-    default_language = "JCL"
+    default_language = DEFAULT_LANGUAGE
     config_prefix = ""
     initial_mode = "editor"
     read_only = False
@@ -62,7 +62,7 @@ class BaseCardDeckDevice(DeviceBase):
         if color:
             self._color = color
         lang = self._config.get_setting("devices", self._lang_key(), self.default_language)
-        if lang in LANGUAGES:
+        if lang in language_names():
             self._lang = lang
         auto_number = self._config.get_setting("devices", self._auto_number_key(), "0")
         self._auto_number = auto_number == "1"

@@ -15,7 +15,7 @@ from PySide6.QtWidgets import (
     QFormLayout,
     QVBoxLayout,
 )
-from .card_data import LANGUAGES
+from .card_data import DEFAULT_LANGUAGE, language_names
 
 _CARDS_DIR = os.path.normpath(
     os.path.join(os.path.dirname(__file__), "..", "bitmaps", "cards")
@@ -64,8 +64,9 @@ class CardSetupDialog(QDialog):
         form.addRow("Card color:", self._color_cb)
 
         self._lang_cb = QComboBox()
-        self._lang_cb.addItems(LANGUAGES)
-        self._lang_cb.setCurrentText(lang if lang in LANGUAGES else "JCL")
+        languages = language_names()
+        self._lang_cb.addItems(languages)
+        self._lang_cb.setCurrentText(lang if lang in languages else DEFAULT_LANGUAGE)
         form.addRow("Language:", self._lang_cb)
 
         self._auto_number_cb = QCheckBox("Automatically number sequence columns")

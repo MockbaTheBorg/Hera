@@ -21,7 +21,17 @@ from PySide6.QtGui import (
 )
 from PySide6.QtWidgets import QLabel, QScrollBar, QSizePolicy, QWidget
 
-from .card_data import DATA_COLS, SEQ_COLS, TOTAL_COLS, LANGUAGES, pad80, tabs_for_line
+from .card_data import (
+    DEFAULT_LANGUAGE,
+    DATA_COLS,
+    SEQ_COLS,
+    TOTAL_COLS,
+    language_names,
+    pad80,
+    painted_columns,
+    separator_columns,
+    tabs_for_line,
+)
 
 _ZONE_GREEN = QColor(240, 255, 240)
 _SEL_COLOR = QColor(180, 180, 180)
@@ -40,6 +50,8 @@ class CardEditorWidget(QWidget):
     _STATUS_H = 22
     _FONT_FAMILY = "Courier New"
     _FONT_SIZE = 13
+    _EXTRA_X = 1
+    _EXTRA_Y = 2
 
     def __init__(self, read_only: bool = False, auto_number: bool = False, parent=None):
         super().__init__(parent)
@@ -50,7 +62,7 @@ class CardEditorWidget(QWidget):
         self._read_only = read_only
         self._auto_number = auto_number
         self._lines: list[str] = []
-        self._lang = "JCL"
+        self._lang = DEFAULT_LANGUAGE
         self._cursor_row = 0
         self._cursor_col = 0
         self._first_row = 0
@@ -80,8 +92,8 @@ class CardEditorWidget(QWidget):
 
         self._font = QFont(self._FONT_FAMILY, self._FONT_SIZE)
         fm = QFontMetrics(self._font)
-        self._cw = fm.horizontalAdvance("M")
-        self._ch = fm.height()
+        self._cw = max(1, fm.horizontalAdvance("M") + self._EXTRA_X)
+        self._ch = max(1, fm.height() + self._EXTRA_Y)
 
     @property
     def lines(self) -> list[str]:
@@ -104,7 +116,7 @@ class CardEditorWidget(QWidget):
         return self._cursor_row
 
     def set_language(self, lang: str) -> None:
-        if lang in LANGUAGES:
+        if lang in language_names():
             self._lang = lang
             self.update()
 
@@ -284,8 +296,7 @@ class CardEditorWidget(QWidget):
             row_rect = QRect(cr.left(), y, cr.width(), self._ch)
             painter.fillRect(row_rect, Qt.white)
 
-            is_jcl = self._is_jcl_line(line)
-            self._paint_form_row(painter, row_rect, is_jcl, li < len(self._lines))
+            self._paint_form_row(painter, row_rect)
 
             if self._has_selection():
                 start, end = self._normalized_selection()
@@ -308,7 +319,7 @@ class CardEditorWidget(QWidget):
             baseline_y = y + fm.ascent()
             if li < len(self._lines):
                 for col_i, ch in enumerate(line[:TOTAL_COLS]):
-                    cx = cr.left() + col_i * self._cw
+                    cx = cr.left() + col_i * self._cw + self._EXTRA_X
                     painter.drawText(cx, baseline_y, ch)
 
             if li == self._cursor_row and self._cursor_vis and self.hasFocus():
@@ -319,56 +330,13 @@ class CardEditorWidget(QWidget):
                     painter.fillRect(QRect(cx, y, self._cw, self._ch), Qt.black)
                     if self._cursor_col < len(line):
                         painter.setPen(Qt.white)
-                        painter.drawText(cx, baseline_y, line[self._cursor_col])
+                        painter.drawText(cx + self._EXTRA_X, baseline_y, line[self._cursor_col])
                         painter.setPen(Qt.black)
 
-    def _is_jcl_line(self, line: str) -> bool:
-        return line.startswith("//") or line.startswith("/*")
+    def _form_tick_columns(self) -> set[int]:
+        return set(separator_columns(self._lang))
 
-    def _effective_lang(self) -> str:
-        if self._lang in {"ASM", "FORTRAN", "NONE"}:
-            return self._lang
-        if self._lang != "JCL":
-            return "NONE"
-
-        for raw_line in self._lines[:32]:
-            if not raw_line.startswith("//"):
-                continue
-            card_text = raw_line[2:TOTAL_COLS].rstrip()
-            exec_idx = card_text.find(" EXEC ")
-            if exec_idx < 0 or exec_idx > 40:
-                continue
-
-            program = card_text[exec_idx + 6:].lstrip()
-            if program.startswith("PGM="):
-                program = program[4:]
-            elif program.startswith("PROC="):
-                program = program[5:]
-
-            if program.startswith(("IFOX", "IEUASM", "ASM")):
-                return "ASM"
-            if program.startswith("FORT"):
-                return "FORTRAN"
-
-        return "NONE"
-
-    def _form_tick_columns(self, is_jcl: bool) -> set[int]:
-        tick_cols = {DATA_COLS}
-        effective_lang = self._effective_lang()
-        if not is_jcl:
-            if effective_lang == "FORTRAN":
-                tick_cols.update({5, 6})
-            elif effective_lang == "ASM":
-                tick_cols.update({8, 9, 14, 15, 71})
-        return tick_cols
-
-    def _paint_form_row(
-        self,
-        painter: QPainter,
-        row_rect: QRect,
-        is_jcl: bool,
-        has_line: bool,
-    ) -> None:
+    def _paint_form_row(self, painter: QPainter, row_rect: QRect) -> None:
         y = row_rect.top()
         row_bottom = row_rect.bottom()
 
@@ -380,19 +348,11 @@ class CardEditorWidget(QWidget):
         )
         painter.fillRect(seq_rect, _ZONE_GREEN)
 
-        effective_lang = self._effective_lang()
-        if not is_jcl:
-            if effective_lang == "FORTRAN":
-                painter.fillRect(
-                    QRect(row_rect.left() + 5 * self._cw + 1, y, self._cw, self._ch),
-                    _ZONE_GREEN,
-                )
-            elif effective_lang == "ASM":
-                for col_z in (8, 14):
-                    painter.fillRect(
-                        QRect(row_rect.left() + col_z * self._cw + 1, y, self._cw, self._ch),
-                        _ZONE_GREEN,
-                    )
+        for col_z in painted_columns(self._lang):
+            painter.fillRect(
+                QRect(row_rect.left() + col_z * self._cw + 1, y, self._cw, self._ch),
+                _ZONE_GREEN,
+            )
 
         tick_pen = QPen(_TICK_COLOR, 1)
         painter.setPen(tick_pen)
@@ -403,7 +363,7 @@ class CardEditorWidget(QWidget):
         painter.drawLine(left, row_bottom - 1, right, row_bottom - 1)
         painter.drawLine(right, row_bottom - 1, right, y - 1)
 
-        full_height_cols = self._form_tick_columns(is_jcl)
+        full_height_cols = self._form_tick_columns()
         tick_top = max(y, row_bottom - 3)
         for col in range(1, TOTAL_COLS):
             x = left + col * self._cw
@@ -642,8 +602,7 @@ class CardEditorWidget(QWidget):
     def _do_tab(self, forward: bool = True):
         if not self._lines:
             return
-        line = self._lines[self._cursor_row] if self._cursor_row < len(self._lines) else ""
-        tabs = tabs_for_line(line, self._effective_lang())
+        tabs = tabs_for_line(self._lang)
         col1 = self._cursor_col + 1
 
         if forward:
