@@ -64,17 +64,9 @@ class HerculesAPI:
         """Return all CPU info including registers, PSW, mode, online status."""
         return self._get("cpus")
 
-    def get_psw(self) -> Optional[dict]:
-        """Return the current PSW."""
-        return self._get("psw")
-
     def get_rates(self) -> Optional[dict]:
         """Return current MIPS and IO rates."""
         return self._get("rates")
-
-    def get_maxrates(self) -> Optional[dict]:
-        """Return peak MIPS and IO rates."""
-        return self._get("maxrates")
 
     def get_devices(self) -> Optional[dict]:
         """Return list of configured devices with status."""
@@ -117,10 +109,6 @@ class HerculesAPI:
         if result is None:
             return None
         return result.get("syslog", [])
-
-    def get_storage(self, address: int = 0, fullwords: int = 32) -> Optional[dict]:
-        """Return fullwords from memory starting at address."""
-        return self._get("storage", params={"address": hex(address), "fullwords": fullwords})
 
     def get_console_port(self, default: int = 3270) -> int:
         """Return the Hercules console socket port (CNSLPORT setting).

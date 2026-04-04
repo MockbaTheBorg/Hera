@@ -342,7 +342,6 @@ class Prt1403Device(DeviceBase):
             save_as_pdf(
                 lines=lines,
                 path=path,
-                font_family=self._font_family,
                 font_filename=self._font_filename,
                 page_length=PAGE_LENGTH,
                 color_form=self._color_name,
@@ -550,7 +549,6 @@ class Prt1403Device(DeviceBase):
             save_as_pdf(
                 lines=self._all_lines[:],
                 path=path,
-                font_family=self._font_family,
                 font_filename=self._font_filename,
                 page_length=PAGE_LENGTH,
                 color_form=self._color_name,

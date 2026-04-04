@@ -12,8 +12,6 @@ The tool understands:
 - IEBCOPY-style unloaded partitioned datasets stored as one tape dataset
 """
 
-from __future__ import annotations
-
 import argparse
 import codecs
 import json

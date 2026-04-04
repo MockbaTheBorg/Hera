@@ -5,8 +5,6 @@
 Shared font and color helpers for terminal-like widgets.
 """
 
-from __future__ import annotations
-
 from pathlib import Path
 
 from PySide6.QtGui import QColor, QFont, QFontDatabase, QFontMetrics

@@ -17,8 +17,6 @@ from PySide6.QtWidgets import QWidget, QLabel, QVBoxLayout
 from PySide6.QtGui import QPainter, QColor
 from PySide6.QtCore import QRect, Qt, QTimer
 
-from .theme import BUTTON_HEIGHT  # re-exported for backwards compatibility
-
 import os as _os
 
 _BITMAPS_BASE = _os.path.join(_os.path.dirname(__file__), "bitmaps")

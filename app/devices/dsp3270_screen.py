@@ -187,12 +187,6 @@ class Screen3270:
 
         for (order, params) in self._parse_orders(data):
             if order is None:
-                explicit_sa = (
-                    sa_color is not None
-                    or sa_blink is not None
-                    or sa_reverse is not None
-                    or sa_underscore is not None
-                )
                 for byte in params:
                     self._write_char(
                         self.address,
@@ -328,12 +322,6 @@ class Screen3270:
             elif order == ORD_RA:
                 stop, byte, is_ge = params
                 end = wrap_addr(stop - 1)
-                explicit_sa = (
-                    sa_color is not None
-                    or sa_blink is not None
-                    or sa_reverse is not None
-                    or sa_underscore is not None
-                )
                 for a in self._range(self.address, end):
                     self._write_char(
                         a,

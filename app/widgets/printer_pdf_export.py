@@ -162,10 +162,7 @@ def _draw_page(
 def save_as_pdf(
     lines: list,
     path: str,
-    font_family: str = "",
     font_filename: str = "",
-    bar_even=None,
-    bar_odd=None,
     page_length: int = PAGE_LINES,
     color_form: str = "GREEN",
     color_holes: str = "GRAY",
@@ -176,11 +173,8 @@ def save_as_pdf(
     ----------
     lines         : list of text strings; '\\x0C' entries trigger explicit page breaks
     path          : output PDF file path
-    font_family   : device font family name (unused at render time; kept for callers)
     font_filename : TTF filename in fonts/ directory (e.g. 'dotmatrix.ttf'); used to
                     select the correct typeface for the PDF output
-    bar_even      : ignored (color controlled by color_form)
-    bar_odd       : ignored (color controlled by color_form)
     page_length   : lines per page (default 66)
     color_form    : paper color key from PAPER_COLORS (default 'GREEN')
     color_holes   : hole color key from PAPER_COLORS (default 'GRAY')

@@ -22,7 +22,7 @@ Dynamic height support:
 from PySide6.QtGui import QPainter, QColor, QFontMetrics, QPixmap
 from PySide6.QtCore import QRect
 
-from .terminal_style import TERMINAL_MINI_FONT_SIZE_PX, terminal_font
+from .terminal_style import terminal_font
 
 
 class MiniScreenOverlay:
