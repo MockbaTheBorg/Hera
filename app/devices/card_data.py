@@ -62,6 +62,6 @@ def pad80(line: str) -> str:
 
 def tabs_for_line(line: str, lang: str) -> list[int]:
     """Return 1-indexed tab stops for this line."""
-    if line.startswith("//"):
+    if line.startswith("//") or line.startswith("/*"):
         return _TABS["JCL"]
     return _TABS.get(lang, _TABS["NONE"])

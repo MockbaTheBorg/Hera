@@ -208,3 +208,6 @@ __marimo__/
 
 # Printer dumps
 *.pdf
+
+# Hera extras
+reference/
