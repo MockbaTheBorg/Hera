@@ -36,6 +36,7 @@ _HOLE_DX   =   6.21    # Column pitch
 _HOLE_DY   =  18.29    # Row pitch
 _HOLE_H    =   7.10    # Hole height
 _HOLE_W    =   3.00    # Hole width
+_HOLE_W_PX =   1.00    # Extra rendered hole width in screen pixels
 _TEXT_X_PT =  18.4     # Text overlay x origin
 _TEXT_Y_PT =  14.0     # Text overlay y (top, above Y zone)
 _CARD_ASPECT = _CARD_W_PT / _CARD_H_PT  # ≈ 2.185
@@ -184,9 +185,9 @@ class CardWidget(QWidget):
             for row_idx in hollerith_holes(ch):
                 hx = cr.left() + (_HOLE_X0 + col_idx * _HOLE_DX) / _CARD_W_PT * cr.width()
                 hy = cr.top()  + (_HOLE_Y0 + row_idx * _HOLE_DY) / _CARD_H_PT * cr.height()
-                hw = _HOLE_W / _CARD_W_PT * cr.width()
+                hw = _HOLE_W / _CARD_W_PT * cr.width() + _HOLE_W_PX
                 hh = _HOLE_H / _CARD_H_PT * cr.height()
-                painter.drawRect(QRectF(hx, hy, hw, hh))
+                painter.drawRect(QRectF(hx - (_HOLE_W_PX / 2.0), hy, hw, hh))
 
         # Draw sequence number bottom-left of card
         seq = line[DATA_COLS:] if len(line) > DATA_COLS else ''
