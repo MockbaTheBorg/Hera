@@ -19,6 +19,7 @@ In 3215 mode, operator commands are dispatched via the REST API syslog endpoint.
 import logging
 import os
 from collections import deque
+from datetime import datetime
 from typing import Optional
 
 import shiboken6
@@ -38,22 +39,26 @@ logger = logging.getLogger(__name__)
 # Tuple: (x, base_y, w, max_h, max_lines, rotation)
 #   x, base_y  – bitmap coords of the "base" anchor (where paper exits the device)
 #   w          – area width in bitmap pixels
-#   max_h      – max area height in bitmap pixels (max_h == max_lines → 1 px/line)
-#   max_lines  – lines to track from the print buffer; default MINI_SCREEN_LINES
+#   max_h      – max area height in bitmap pixels
+#   max_lines  – lines to retain from the print buffer before scrolling
 #   rotation   – 0:   area grows UPWARD   from base_y (3215 style, no rotation)
 #                180: area grows DOWNWARD from base_y (1403 style, text flipped)
+#
+# Mini-print font height is fixed per device via MINI_FONT_PX_3215 and
+# MINI_FONT_PX_1403 rather than being derived from max_h/max_lines.
 #
 # 3215: paper exits at the BOTTOM of the mini-area.
 #       base_y = y + max_h = 1 + 43 = 44; area grows upward from there.
 # 1403: paper exits at the TOP of the mini-area (printer head at y=90).
 #       base_y = 90; area grows downward to the paper-collection box (~y=176).
-#       max_h = 86 → tracks 86 lines at 1 px/line, filling the full zone.
 
-MINI_SCREEN_LINES = 66   # default buffer depth (3215 uses this)
-MINI_SCREEN_COLS  = 132
+MINI_FONT_PX_3215 = 1
+MINI_FONT_PX_1403 = 1
+WORKSPACE_SIDE_MARGIN_CHARS = 4
+MINI_SIDE_MARGIN_CHARS = 2
 
-_MINI_3215 = (27, 44,  81, 43, MINI_SCREEN_LINES, 0)
-_MINI_1403 = (45, 90, 132, 86, 86, 180)
+_MINI_3215 = (27, 44,  81, 43, 66, 0)
+_MINI_1403 = (55, 90, 112, 86, 86, 180)
 
 # Standard green-bar colors for both mini-screen and workspace
 BAR_EVEN   = QColor(255, 255, 255)   # white (uncolored bands)
@@ -61,10 +66,11 @@ BAR_ODD    = QColor(221, 255, 221)   # #DDFFDD default green
 TEXT_COLOR = QColor(0, 0, 0)
 
 PAGE_LENGTH = 66  # standard IBM fan-fold page (11" at 6 lpi)
+PAGE_WIDTH  = 132
 DEFAULT_3215_LINE_DELAY_MS = 10
 DEFAULT_3215_BLANK_LINE_DELAY_MS = 1
-DEFAULT_1403_LINE_DELAY_MS = 50
-DEFAULT_1403_BLANK_LINE_DELAY_MS = 5
+DEFAULT_1403_LINE_DELAY_MS = 30
+DEFAULT_1403_BLANK_LINE_DELAY_MS = 3
 
 # ── Paper color palettes ──────────────────────────────────────────────────────
 # Each entry: (dark_QColor, light_QColor) matching prt1403 reference RGB values.
@@ -129,11 +135,13 @@ class Prt1403Device(DeviceBase):
             self._font_filename = "dotmatrix.ttf"
             self._font_family = _load_font(self._font_filename)
             bx, by, bw, bmax_h, bmax_lines, brot = _MINI_3215
+            self._mini_font_px = MINI_FONT_PX_3215
         else:
             self.bitmap_name = "1403.png"
             self._font_filename = "impact.ttf"
             self._font_family = _load_font(self._font_filename)
             bx, by, bw, bmax_h, bmax_lines, brot = _MINI_1403
+            self._mini_font_px = MINI_FONT_PX_1403
 
         # Per-device mini-print parameters
         self._mini_max_lines: int = bmax_lines
@@ -164,7 +172,7 @@ class Prt1403Device(DeviceBase):
         self._mini_screen = MiniScreenOverlay(
             bx, mso_y, bw, bmax_h,
             max_lines=bmax_lines,
-            max_cols=MINI_SCREEN_COLS,
+            max_cols=PAGE_WIDTH,
             bar_even=bar_even,
             bar_odd=bar_odd,
             text_color=TEXT_COLOR,
@@ -172,6 +180,8 @@ class Prt1403Device(DeviceBase):
             page_header_lines=6,
             lines_per_band=3,
             page_length=PAGE_LENGTH,
+            fixed_line_px=self._mini_font_px,
+            side_margin_chars=MINI_SIDE_MARGIN_CHARS,
         )
         self._mini_lines: list[str] = []
 
@@ -275,6 +285,7 @@ class Prt1403Device(DeviceBase):
                 page_length=PAGE_LENGTH,
                 has_command_input=self._is_3215,
                 color_name=self._color_name,
+                side_margin_chars=WORKSPACE_SIDE_MARGIN_CHARS,
             )  # GreenBarPaper defaults: lines_per_band=3, page_header_lines=6
             if self._is_3215:
                 self._workspace.send_command.connect(self._on_send_command)
@@ -426,6 +437,13 @@ class Prt1403Device(DeviceBase):
         for _ in range(pad_count):
             self._enqueue_line("")
 
+    def _enqueue_form_feed(self) -> None:
+        """Advance to the next top-of-form position unless already there."""
+        line_count = len(self._all_lines) + len(self._queued_lines)
+        if line_count == 0 or line_count % PAGE_LENGTH == 0:
+            return
+        self._enqueue_page_eject()
+
     def _schedule_next_line(self) -> None:
         if not self._queued_lines:
             return
@@ -448,8 +466,13 @@ class Prt1403Device(DeviceBase):
         if self._queued_lines:
             self._schedule_next_line()
 
-    def _build_test_printout_lines(self) -> list[str]:
-        columns = MINI_SCREEN_COLS
+    @staticmethod
+    def _test_line(label: str, value: object = "") -> str:
+        text = f"{label:<28} {value}".rstrip()
+        return text[:PAGE_WIDTH]
+
+    def _build_test_ruler_lines(self) -> list[str]:
+        columns = PAGE_WIDTH
         printer_name = "IBM 3215 Console Printer" if self._is_3215 else "IBM 1403 Line Printer"
         header = f"HERA PRINTER TEST  {printer_name}  DEVICE {self._devnum or 'UNKNOWN'}"
         note = "The ruler below should end at column 132 with the right border visible."
@@ -458,6 +481,73 @@ class Prt1403Device(DeviceBase):
         ones = "".join(str(column % 10) for column in range(1, columns + 1))
         sample = "".join(chr(ord("A") + ((column - 1) % 26)) for column in range(1, columns + 1))
         return [header, note, boundary, tens, ones, sample, boundary]
+
+    def _build_test_info_lines(self) -> list[str]:
+        mode_name = "3215" if self._is_3215 else "1403"
+        socket_endpoint = f"{self._host}:{self._port}"
+        config_endpoint = f"{self._config.host}:{self._config.port}" if self._config is not None else "n/a"
+        config_order = ", ".join(self._config.device_order) if self._config and self._config.device_order else "default"
+        api_base_url = self._config.api_base_url if self._config is not None else "n/a"
+        info_lines = [
+            "HERA SYSTEM DIAGNOSTICS",
+            "",
+            self._test_line("Generated", datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
+            self._test_line("Printer mode", mode_name),
+            self._test_line("Printer name", "IBM 3215 Console Printer" if self._is_3215 else "IBM 1403 Line Printer"),
+            self._test_line("Device class", self.devclass or "PRT"),
+            self._test_line("Device type", self.devtype or "unknown"),
+            self._test_line("Device number", self._devnum or "UNKNOWN"),
+            self._test_line("Bitmap", self.bitmap_name),
+            self._test_line("Host", self._host),
+            self._test_line("Socket port", self._port),
+            self._test_line("Socket endpoint", socket_endpoint),
+            self._test_line("Socket connected", "yes" if self._reader.is_connected else "no"),
+            self._test_line("REST API endpoint", config_endpoint),
+            self._test_line("REST API base URL", api_base_url),
+            self._test_line("API client attached", "yes" if self._api_client is not None else "no"),
+            self._test_line("Paper color", self._color_name),
+            self._test_line("Font file", self._font_filename),
+            self._test_line("Font family", self._font_family or "default"),
+            self._test_line("Mini font px", self._mini_font_px),
+            self._test_line("Workspace side margin", WORKSPACE_SIDE_MARGIN_CHARS),
+            self._test_line("Mini side margin", MINI_SIDE_MARGIN_CHARS),
+            self._test_line("Mini max lines", self._mini_max_lines),
+            self._test_line("Mini columns", PAGE_WIDTH),
+            self._test_line("Mini rotation", self._mini_rotation),
+            self._test_line("Page length", PAGE_LENGTH),
+            self._test_line("Line delay ms", self._line_delay_ms),
+            self._test_line("Blank line delay ms", self._blank_line_delay_ms),
+            self._test_line("Queued lines", len(self._queued_lines)),
+            self._test_line("Buffered lines", len(self._all_lines)),
+            self._test_line("Saved", "yes" if self._saved else "no"),
+            self._test_line("Workspace created", "yes" if self._workspace is not None else "no"),
+            self._test_line("Pending command", self._pending_command or "none"),
+            self._test_line("Command input", "enabled" if self._is_3215 else "disabled"),
+            self._test_line("Config host", self._config.host if self._config is not None else "n/a"),
+            self._test_line("Config port", self._config.port if self._config is not None else "n/a"),
+            self._test_line("Poll interval", self._config.poll_interval if self._config is not None else "n/a"),
+            self._test_line("Tapes folder", self._config.tapes_folder if self._config is not None else "n/a"),
+            self._test_line("Bitmap theme", self._config.bitmap_theme if self._config is not None else "n/a"),
+            self._test_line("Room background", self._config.room_background if self._config is not None else "n/a"),
+            self._test_line("Device order", config_order),
+            self._test_line("Auto-save PDFs", self._config.get_setting("shutdown", "autosave_printer_pdfs", "1") if self._config is not None else "n/a"),
+            self._test_line("Printer color key", f"printer_color_{self._devnum}"),
+            self._test_line("Line delay key", f"printer_line_delay_ms_{self._devnum}"),
+            self._test_line("Blank delay key", f"printer_blank_line_delay_ms_{self._devnum}"),
+            self._test_line("Mini area", f"{self._mini_screen._w}x{self._mini_screen._h}"),
+            self._test_line("Room light origin", self.room_light_origin or "none"),
+            self._test_line("Reader thread", getattr(self._reader, "_thread_name", "n/a")),
+            self._test_line("Working directory", os.getcwd()),
+            self._test_line("End of diagnostics", "page continues below"),
+        ]
+        target_lines = PAGE_LENGTH - (len(self._build_test_ruler_lines()) * 2) - 2
+        if len(info_lines) < target_lines:
+            info_lines.extend([""] * (target_lines - len(info_lines)))
+        return info_lines[:target_lines]
+
+    def _build_test_printout_lines(self) -> list[str]:
+        ruler_lines = self._build_test_ruler_lines()
+        return ruler_lines + [""] + self._build_test_info_lines() + [""] + ruler_lines
 
     # ------------------------------------------------------------------
     # Socket line handler
@@ -561,9 +651,10 @@ class Prt1403Device(DeviceBase):
 
     def _do_test(self) -> None:
         if self._all_lines or self._queued_lines:
-            self._enqueue_line("")
+            self._enqueue_form_feed()
         for line in self._build_test_printout_lines():
             self._enqueue_line(line)
+        self._enqueue_form_feed()
 
     def _do_discard(self) -> None:
         # Immediate clear when buffer is empty or already saved

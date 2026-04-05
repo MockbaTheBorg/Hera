@@ -46,6 +46,7 @@ class PrinterWorkspace(QWidget):
         has_command_input: bool = False,
         page_length: int = 66,
         color_name: str = "GREEN",
+        side_margin_chars: int = 0,
     ):
         super().__init__(parent)
         self._has_cmd = has_command_input
@@ -64,6 +65,7 @@ class PrinterWorkspace(QWidget):
             bar_odd=bar_odd,
             font_family=font_family,
             page_length=page_length,
+            side_margin_chars=side_margin_chars,
         )
         layout.addWidget(self._paper, stretch=1)
 

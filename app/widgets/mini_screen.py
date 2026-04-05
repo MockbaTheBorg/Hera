@@ -46,6 +46,9 @@ class MiniScreenOverlay:
     lines_per_band     : lines sharing one band color before switching (default: 1)
     page_length        : page length in lines; used to compute position-within-page
                          for band coloring when page_header_lines > 0 (default: 66)
+    fixed_line_px      : fixed line height in pixels; when omitted, line height is
+                         derived from the visible area height as before
+    side_margin_chars  : left/right text margin measured in character cells
     """
 
     def __init__(
@@ -62,6 +65,8 @@ class MiniScreenOverlay:
         page_header_lines: int = 0,
         lines_per_band: int = 1,
         page_length: int = 66,
+        fixed_line_px: int | None = None,
+        side_margin_chars: int = 0,
         font_family: str | None = None,
         bold: bool = False,
         opacity: float = 1.0,
@@ -83,6 +88,8 @@ class MiniScreenOverlay:
         self._page_header_lines = page_header_lines
         self._lines_per_band = lines_per_band
         self._page_length = page_length
+        self._fixed_line_px = None if fixed_line_px is None else max(1, min(int(fixed_line_px), h))
+        self._side_margin_chars = max(0, side_margin_chars)
         self._font_family = font_family
         self._bold = bold
         self._opacity = max(0.0, min(1.0, opacity))
@@ -139,21 +146,33 @@ class MiniScreenOverlay:
         if not lines and line_count == 0:
             return
 
-        # Determine how many lines to show and how tall the visible area is
+        # Determine how many lines to show and how tall the visible area is.
+        # Printers can pin mini-print line height to a fixed pixel size.
         if line_count == 0:
-            # Backward-compatible: always full height
             visible_lines = min(len(lines), self._max_lines)
-            visible_h = self._h
+            if self._fixed_line_px is None:
+                # Backward-compatible: always full height
+                visible_h = self._h
+            else:
+                visible_h = min(self._h, visible_lines * self._fixed_line_px)
         else:
             visible_lines = min(line_count, self._max_lines)
-            visible_h = round(visible_lines / self._max_lines * self._h)
+            if self._fixed_line_px is None:
+                visible_h = round(visible_lines / self._max_lines * self._h)
+            else:
+                visible_h = min(self._h, visible_lines * self._fixed_line_px)
 
         if visible_h == 0:
             return
 
-        # At minimum 1 px per line; cap visible_lines to what fits in the pixmap
-        # so that no lines are silently clipped when max_h < max_lines.
-        visible_lines = min(visible_lines, visible_h)
+        if self._fixed_line_px is None:
+            # At minimum 1 px per line; cap visible_lines to what fits in the pixmap
+            # so that no lines are silently clipped when max_h < max_lines.
+            visible_lines = min(visible_lines, visible_h)
+            line_px = max(1, visible_h // max(1, visible_lines))
+        else:
+            visible_lines = min(visible_lines, max(1, visible_h // self._fixed_line_px))
+            line_px = self._fixed_line_px
 
         # Take the last visible_lines from the input
         display_lines = lines[-visible_lines:] if len(lines) >= visible_lines else lines
@@ -172,8 +191,6 @@ class MiniScreenOverlay:
 
         screen_rect = QRect(screen_x, screen_y, self._w, visible_h)
 
-        line_px = max(1, visible_h // max(1, visible_lines))
-
         pm = QPixmap(self._w, visible_h)
 
         if self._bar_even is not None:
@@ -187,6 +204,10 @@ class MiniScreenOverlay:
             if self._bold:
                 font.setBold(True)
             p.setFont(font)
+            metrics = QFontMetrics(font)
+            side_margin_px = min(self._w // 2, metrics.horizontalAdvance("M") * self._side_margin_chars)
+            text_x = side_margin_px
+            text_w = max(1, self._w - (2 * side_margin_px))
             for i, line in enumerate(display_lines):
                 bg = self._band_color(abs_line_base + i)
                 line_fg = None
@@ -199,7 +220,10 @@ class MiniScreenOverlay:
                             break
                 p.fillRect(0, i * line_px, self._w, line_px, bg)
                 p.setPen(line_fg if line_fg is not None else self._text_color)
-                p.drawText(0, (i + 1) * line_px, line[:self._max_cols])
+                p.save()
+                p.setClipRect(text_x, i * line_px, text_w, line_px)
+                p.drawText(text_x, (i + 1) * line_px, line[:self._max_cols])
+                p.restore()
         else:
             # Solid mode
             pm.fill(self._bg)
@@ -211,6 +235,10 @@ class MiniScreenOverlay:
             if self._bold:
                 font.setBold(True)
             p.setFont(font)
+            metrics = QFontMetrics(font)
+            side_margin_px = min(self._w // 2, metrics.horizontalAdvance("M") * self._side_margin_chars)
+            text_x = side_margin_px
+            text_w = max(1, self._w - (2 * side_margin_px))
             for i, line in enumerate(display_lines):
                 line_fg = None
                 if highlights:
@@ -221,7 +249,10 @@ class MiniScreenOverlay:
                             line_fg = h_fg
                             break
                 p.setPen(line_fg if line_fg is not None else self._fg)
-                p.drawText(0, (i + 1) * line_px, line[:self._max_cols])
+                p.save()
+                p.setClipRect(text_x, i * line_px, text_w, line_px)
+                p.drawText(text_x, (i + 1) * line_px, line[:self._max_cols])
+                p.restore()
 
         p.end()
         pm = self._brighten_pixmap(pm)

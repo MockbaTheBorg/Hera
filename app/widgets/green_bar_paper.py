@@ -11,7 +11,7 @@ page boundary.
 """
 
 from PySide6.QtWidgets import QTextEdit
-from PySide6.QtGui import QColor, QTextBlockFormat, QTextCharFormat, QTextCursor
+from PySide6.QtGui import QColor, QFont, QTextBlockFormat, QTextCharFormat, QTextCursor
 
 from ..theme import SCROLLBAR_QSS
 
@@ -43,6 +43,7 @@ class GreenBarPaper(QTextEdit):
         page_header_lines: int = 6,
         font_family: str = "",
         page_length: int = 0,
+        side_margin_chars: int = 0,
         parent=None,
     ):
         super().__init__(parent)
@@ -51,18 +52,22 @@ class GreenBarPaper(QTextEdit):
         self._lines_per_band = max(1, lines_per_band)
         self._page_header_lines = max(0, page_header_lines)
         self._page_length = max(0, page_length)
+        self._side_margin_chars = max(0, side_margin_chars)
+        self._raw_lines: list[str] = []
         self._line_count = 0   # text lines (not counting perf blocks)
         self._band_pos = 0     # position within current page for band cycling
 
         self.setReadOnly(True)
         self.setLineWrapMode(QTextEdit.LineWrapMode.NoWrap)
 
-        font_spec = f"'{font_family}', monospace" if font_family else "'Courier New', monospace"
+        font = QFont(font_family or "Courier New")
+        font.setStyleHint(QFont.StyleHint.TypeWriter)
+        font.setPixelSize(13)
+        self.setFont(font)
+
         self.setStyleSheet(
             f"QTextEdit {{"
             f"  color: #000000;"
-            f"  font-family: {font_spec};"
-            f"  font-size: 13px;"
             f"  border: 1px solid #999;"
             f"}}"
             + SCROLLBAR_QSS
@@ -115,7 +120,9 @@ class GreenBarPaper(QTextEdit):
         else:
             cursor.insertBlock(block_fmt, QTextCharFormat())
 
-        cursor.insertText(text)
+        self._raw_lines.append(text)
+        margin = " " * self._side_margin_chars
+        cursor.insertText(f"{margin}{text}{margin}")
         self._line_count += 1
         self._band_pos += 1
 
@@ -124,6 +131,7 @@ class GreenBarPaper(QTextEdit):
 
     def set_lines(self, lines: list) -> None:
         """Replace all content and re-render from line 0."""
+        self._raw_lines = []
         self._line_count = 0
         self._band_pos = 0
         self.clear()
@@ -132,7 +140,7 @@ class GreenBarPaper(QTextEdit):
 
     def get_lines(self) -> list[str]:
         """Return all text lines as a list (perf markers excluded)."""
-        return self.toPlainText().splitlines()
+        return self._raw_lines[:]
 
     def set_colors(self, bar_even: QColor, bar_odd: QColor) -> None:
         """Update band colors and re-render all existing lines."""
