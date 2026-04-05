@@ -295,6 +295,8 @@ class TapeDevice(DeviceBase):
             return False
         for line in lines:
             stripped = strip_herc_prefix(line)
+            if not stripped or stripped == cmd or stripped.startswith("sh:"):
+                continue
             if stripped == filename or stripped.endswith("/" + filename):
                 return True
         return False
