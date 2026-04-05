@@ -35,7 +35,7 @@ import os
 from typing import Optional
 
 import shiboken6
-from PySide6.QtCore import Qt, QRect, QObject, Signal, Slot
+from PySide6.QtCore import Qt, QRect, QObject, Signal, Slot, QTimer
 from PySide6.QtGui import QColor, QFont, QPainter, QPixmap
 from PySide6.QtWidgets import (
     QDialog, QMessageBox,
@@ -57,6 +57,7 @@ from .media_common import (
 from .tape_support import (
     MountDialog,
     NewTapeDialog,
+    TapeDisplayState,
     parse_assignment,
     strip_herc_prefix,
     validate_folder,
@@ -73,6 +74,7 @@ _TEXT_TOP   = 111
 _TEXT_W     = 45
 _TEXT_H     = 12
 _TEXT_COLOR = QColor(64, 64, 64)
+_DISPLAY_TICK_MS = 500
 
 # Commands sent to Hercules when the device is selected.
 # Each template is formatted with .format(**kwargs) before being sent.
@@ -85,6 +87,7 @@ WORKSPACE_COMMANDS = [
 
 class _TapeSignals(QObject):
     button_state_changed = Signal(bool)
+    display_state_changed = Signal()
 
 
 # ── Device plugin ─────────────────────────────────────────────────────────────
@@ -102,7 +105,10 @@ class TapeDevice(DeviceBase):
         self._config = self.config
         self._loaded: bool = False
         self._protected: bool = False
-        self._display: str = ""
+        self._display_primary: str = ""
+        self._display_secondary: Optional[str] = None
+        self._display_mode: str = "static"
+        self._display_phase: bool = False
         self._vol_label: str = ""
         self._last_assignment: Optional[str] = None
         self._prot_pixmap: Optional[QPixmap] = self._load_pixmap("2401prot.png")
@@ -112,8 +118,14 @@ class TapeDevice(DeviceBase):
         self._btn_mount: Optional[QPushButton] = None
         self._btn_unmount: Optional[QPushButton] = None
         self._signals = _TapeSignals()
+        self._display_timer = QTimer(self._signals)
+        self._display_timer.setInterval(_DISPLAY_TICK_MS)
+        self._display_timer.timeout.connect(self._on_display_tick)
         self._signals.button_state_changed.connect(
             self._apply_button_states, Qt.QueuedConnection
+        )
+        self._signals.display_state_changed.connect(
+            self._sync_display_animation, Qt.QueuedConnection
         )
 
     def _load_pixmap(self, filename: str) -> Optional[QPixmap]:
@@ -169,10 +181,43 @@ class TapeDevice(DeviceBase):
             self._loaded = loaded
             if not loaded:
                 self._protected = False
-                self._display = ""
+                self._set_display_state(TapeDisplayState())
                 self._vol_label = ""
+                self._signals.display_state_changed.emit()
             self._apply_button_states(loaded)
         self._refresh_output(client)
+
+    def _set_display_state(self, display_state: TapeDisplayState) -> None:
+        self._display_primary = display_state.primary_text
+        self._display_secondary = display_state.secondary_text
+        self._display_mode = display_state.mode
+        self._display_phase = False
+
+    def _is_display_animated(self) -> bool:
+        return self._display_mode in {"blinking", "alternating"} and bool(self._display_primary)
+
+    def _visible_display_text(self) -> str:
+        if not self._display_primary:
+            return ""
+        if self._display_mode == "blinking":
+            return "" if self._display_phase else self._display_primary
+        if self._display_mode == "alternating" and self._display_secondary:
+            return self._display_secondary if self._display_phase else self._display_primary
+        return self._display_primary
+
+    @Slot()
+    def _sync_display_animation(self) -> None:
+        if self._is_display_animated():
+            if not self._display_timer.isActive():
+                self._display_timer.start()
+        elif self._display_timer.isActive():
+            self._display_timer.stop()
+        self.request_room_repaint()
+
+    @Slot()
+    def _on_display_tick(self) -> None:
+        self._display_phase = not self._display_phase
+        self.request_room_repaint()
 
     @property
     def _tapes_folder(self) -> str:
@@ -191,12 +236,13 @@ class TapeDevice(DeviceBase):
             return
         self._last_assignment = assignment
         self.mark_room_activity()
-        file_path, is_protected, display = parse_assignment(assignment)
+        file_path, is_protected, display_state = parse_assignment(assignment)
         self._loaded = file_path is not None
         self._protected = is_protected
-        self._display = display
+        self._set_display_state(display_state)
         self._vol_label = label_from_path(file_path) if file_path else ""
         self._signals.button_state_changed.emit(self._loaded)
+        self._signals.display_state_changed.emit()
 
     @Slot(bool)
     def _apply_button_states(self, loaded: bool) -> None:
@@ -408,7 +454,8 @@ class TapeDevice(DeviceBase):
                 )
 
         # Drive display text — always when non-empty
-        if self._display:
+        display_text = self._visible_display_text()
+        if display_text:
             font = QFont()
             font.setPixelSize(9)
             painter.save()
@@ -418,7 +465,7 @@ class TapeDevice(DeviceBase):
                 QRect(rect.left() + _TEXT_LEFT, rect.top() + _TEXT_TOP,
                       _TEXT_W, _TEXT_H),
                 Qt.AlignRight | Qt.AlignVCenter,
-                self._display,
+                display_text,
             )
             painter.restore()
 

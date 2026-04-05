@@ -7,6 +7,7 @@ Support helpers and dialogs for tape devices.
 
 import os
 import re
+from dataclasses import dataclass
 from typing import Optional
 
 from PySide6.QtCore import Qt
@@ -20,6 +21,14 @@ from ..theme import DIALOG_MIN_WIDTH
 _HERC_PREFIX = re.compile(r"^HHC\d{5}[A-Z]\s+")
 _VOLSER_RE = re.compile(r"^[A-Z0-9$#@]+$")
 _ALNUM = re.compile(r"^[A-Z0-9]+$")
+_DISPLAY_TEXT_RE = re.compile(r'"([^"]*)"')
+
+
+@dataclass(frozen=True)
+class TapeDisplayState:
+    primary_text: str = ""
+    secondary_text: Optional[str] = None
+    mode: str = "static"
 
 
 def _dialog_buttons(parent, accept, reject) -> QDialogButtonBox:
@@ -60,17 +69,36 @@ def strip_herc_prefix(line: str) -> str:
     return _HERC_PREFIX.sub("", line).rstrip()
 
 
-def parse_display(assignment: str) -> str:
-    match = re.search(r'Display:\s*"([^"]*)"', assignment)
-    return match.group(1).strip() if match else ""
+def parse_display(assignment: str) -> TapeDisplayState:
+    _, sep, tail = assignment.partition("Display:")
+    if not sep:
+        return TapeDisplayState()
+
+    texts = [text.strip() for text in _DISPLAY_TEXT_RE.findall(tail)]
+    if not texts:
+        return TapeDisplayState()
+
+    mode = "static"
+    lowered = tail.lower()
+    if "(alternating)" in lowered:
+        mode = "alternating"
+    elif "(blinking)" in lowered:
+        mode = "blinking"
+
+    primary_text = texts[0]
+    secondary_text = texts[1] if len(texts) > 1 else None
+    if mode == "alternating" and not secondary_text:
+        mode = "static"
+
+    return TapeDisplayState(primary_text=primary_text, secondary_text=secondary_text, mode=mode)
 
 
 def parse_assignment(assignment: str):
-    """Return (file_path, is_protected, display_text) for a tape assignment."""
-    display_text = parse_display(assignment)
+    """Return (file_path, is_protected, display_state) for a tape assignment."""
+    display_state = parse_display(assignment)
     stripped = assignment.strip()
     if not stripped or stripped.startswith("*"):
-        return None, False, display_text
+        return None, False, display_state
 
     file_path = None
     is_protected = False
@@ -84,7 +112,7 @@ def parse_assignment(assignment: str):
         elif file_path is None:
             file_path = tok
 
-    return file_path, is_protected, display_text
+    return file_path, is_protected, display_state
 
 
 class MountDialog(QDialog):

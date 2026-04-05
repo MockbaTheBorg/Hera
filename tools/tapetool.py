@@ -24,6 +24,8 @@ from typing import Iterable
 EBCDIC_CODEC = "cp037"
 LABEL_NAMES = {"VOL1", "HDR1", "HDR2", "EOF1", "EOF2", "EOV1", "EOV2"}
 MEMBER_NAME_RE = re.compile(r"//([A-Z0-9#$@]{1,8})\b")
+TEXT_MEMBER_NAME_RE = re.compile(r"([A-Z0-9#$@]{1,8})\b")
+DIRECTORY_MEMBER_RE = re.compile(r"IBMUSER   ([A-Z0-9#$@]{1,8})|\\([A-Z0-9#$@]{1,8})")
 
 
 class TapeToolError(Exception):
@@ -112,6 +114,13 @@ class MemberEntry:
     @property
     def data_bytes(self) -> int:
         return len(self.payload_bytes)
+
+
+@dataclass
+class DirectoryEntry:
+    name: str
+    start_key: int
+    expected_lines: int
 
 
 @dataclass
@@ -378,28 +387,120 @@ def logical_records_for_dataset(dataset: DatasetEntry) -> list[LogicalRecord]:
 def detect_partitioned_unload(dataset: DatasetEntry) -> None:
     if len(dataset.records) < 4:
         return
+    hdr2 = dataset.hdr2()
+    raw_tail = ""
+    if hdr2:
+        raw_tail_value = hdr2.fields.get("raw_tail")
+        if isinstance(raw_tail_value, str):
+            raw_tail = raw_tail_value
+    if "PDS2TAPE/COPY" not in raw_tail:
+        return
     control = dataset.records[2].raw
-    if "FORMAT" not in ebcdic_to_text(control):
+    control_text = ebcdic_to_text(control)
+    if "FORMAT" not in control_text and "IBMUSER" not in control_text:
         return
 
-    members: list[MemberEntry] = []
-    for record in dataset.records[3:]:
-        if len(record.raw) < 12:
-            return
-        payload = unload_member_payload(record)
-        key = unload_member_key(record)
-        ascii_text = ebcdic_to_text(payload[:80])
-        match = MEMBER_NAME_RE.match(ascii_text)
-        name = match.group(1) if match else f"MEM{len(members) + 1:03d}"
-        if members and members[-1].key == key:
-            members[-1].records.append(record)
-            continue
-        members.append(MemberEntry(number=len(members) + 1, name=name, key=key, records=[record]))
+    members = members_from_directory(dataset)
+    if not members:
+        members = members_from_payload(dataset)
 
     if members:
         dataset.members = members
         dataset.organization = "PO"
         dataset.dataset_format = "iebcopy-unload"
+
+
+def members_from_directory(dataset: DatasetEntry) -> list[MemberEntry]:
+    directory_entries = parse_directory_entries(dataset.records[2])
+    if len(directory_entries) < 2:
+        return []
+
+    starts = assign_directory_starts(dataset.records[3:], directory_entries)
+    if len(starts) != len(directory_entries):
+        return []
+
+    sorted_starts = sorted(starts, key=lambda item: item[0])
+    records_by_entry: dict[str, list[LogicalRecord]] = {}
+    for index, (record_index, directory_entry) in enumerate(sorted_starts):
+        end_record_index = (
+            sorted_starts[index + 1][0] if index + 1 < len(sorted_starts) else len(dataset.records) + 1
+        )
+        records = dataset.records[record_index - 1:end_record_index - 1]
+        records_by_entry[directory_entry.name] = records
+
+    members: list[MemberEntry] = []
+    for index, directory_entry in enumerate(directory_entries, start=1):
+        records = records_by_entry.get(directory_entry.name)
+        if records is None:
+            return []
+        member = MemberEntry(number=index, name=directory_entry.name, key=directory_entry.start_key, records=records)
+        if member.line_count != directory_entry.expected_lines:
+            return []
+        members.append(member)
+    return members
+
+
+def parse_directory_entries(control_record: LogicalRecord) -> list[DirectoryEntry]:
+    body = control_record.raw[12:]
+    text = ebcdic_to_text(body)
+    entries: list[DirectoryEntry] = []
+    for match in DIRECTORY_MEMBER_RE.finditer(text):
+        name = (match.group(1) or match.group(2) or "").strip()
+        if not name:
+            continue
+        name_offset = match.start(1) if match.group(1) else match.start(2)
+        key_offset = name_offset + 10
+        line_offset = name_offset + 26
+        if line_offset + 2 > len(body) or key_offset + 2 > len(body):
+            continue
+        if body[key_offset + 1] != 0x0F:
+            continue
+        entries.append(
+            DirectoryEntry(
+                name=name,
+                start_key=body[key_offset] << 8,
+                expected_lines=int.from_bytes(body[line_offset:line_offset + 2], "big"),
+            )
+        )
+    return entries
+
+
+def assign_directory_starts(
+    records: list[LogicalRecord], directory_entries: list[DirectoryEntry]
+) -> list[tuple[int, DirectoryEntry]]:
+    starts: list[tuple[int, DirectoryEntry]] = []
+    used_record_indexes: set[int] = set()
+    for entry in directory_entries:
+        matched_index: int | None = None
+        for record in records:
+            if record.index in used_record_indexes:
+                continue
+            if unload_member_key(record) == entry.start_key:
+                matched_index = record.index
+                break
+        if matched_index is None:
+            return []
+        used_record_indexes.add(matched_index)
+        starts.append((matched_index, entry))
+    return starts
+
+
+def members_from_payload(dataset: DatasetEntry) -> list[MemberEntry]:
+    members: list[MemberEntry] = []
+    for record in dataset.records[3:]:
+        if len(record.raw) < 12:
+            return []
+        try:
+            payload = unload_member_payload(record)
+        except TapeToolError:
+            return []
+        key = unload_member_key(record)
+        name = infer_member_name(payload, len(members) + 1)
+        if members and members[-1].key == key:
+            members[-1].records.append(record)
+            continue
+        members.append(MemberEntry(number=len(members) + 1, name=name, key=key, records=[record]))
+    return members
 
 
 def unload_member_key(record: LogicalRecord) -> int:
@@ -417,6 +518,26 @@ def unload_member_payload(record: LogicalRecord) -> bytes:
             f"record {record.index}: unloaded-member payload overruns logical record"
         )
     return record.raw[payload_start:payload_end]
+
+
+def infer_member_name(payload: bytes, member_number: int) -> str:
+    text = ebcdic_to_text(payload[:80])
+    match = MEMBER_NAME_RE.match(text)
+    if match:
+        return match.group(1)
+
+    stripped = text.lstrip()
+    for prefix in ("//", "/*", "/"):
+        if stripped.startswith(prefix):
+            stripped = stripped[len(prefix):].lstrip()
+            break
+
+    match = TEXT_MEMBER_NAME_RE.match(stripped)
+    if match:
+        name = match.group(1)
+        if name not in {"IBMUSER", "FORMAT"}:
+            return name
+    return f"MEM{member_number:03d}"
 
 
 def format_dataset_line(dataset: DatasetEntry) -> str:
