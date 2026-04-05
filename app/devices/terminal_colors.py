@@ -16,8 +16,8 @@ from ..widgets.terminal_style import CONSOLE_DEFAULT_FG, CONSOLE_DEFAULT_BG, con
 # Rules are evaluated in order; the first match wins.
 # Either color may be None to keep the channel at its default.
 CONSOLE_LINE_HIGHLIGHTS: list[tuple[re.Pattern, QColor | None, QColor | None]] = [
-    (re.compile(r"^HHC\d{5}W"), QColor("#FF8C00"), None),   # warning → orange fg
-    (re.compile(r"^HHC\d{5}E"), QColor("#FF4444"), None),   # error   → red fg
+    (re.compile(r"^HHC\d{5}W"), QColor("#FFFFFF"), QColor("#FF8C00")),   # warning → orange fg
+    (re.compile(r"^HHC\d{5}E"), QColor("#FFFFFF"), QColor("#FF4444")),   # error   → red fg
 ]
 
 
