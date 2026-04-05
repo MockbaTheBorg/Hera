@@ -145,17 +145,23 @@ class Config:
         raw_order = app.get("order", "")
         self.device_order = parse_device_order(raw_order)
 
-    def save(self):
-        """Persist current settings to config file (preserves other sections like [devices])."""
+    def save(self, include_connection: bool = True):
+        """Persist current settings to config file.
+
+        When include_connection is False, the existing [connection] section is left
+        untouched so runtime-only CLI overrides do not become the next launch's
+        persisted endpoint.
+        """
         CONFIG_DIR.mkdir(parents=True, exist_ok=True)
         parser = self._parser()
 
-        parser["connection"] = {
-            "host": self.host,
-            "port": str(self.port),
-            "poll_interval": str(self.poll_interval),
-            "tapes_folder": self.tapes_folder,
-        }
+        if include_connection:
+            parser["connection"] = {
+                "host": self.host,
+                "port": str(self.port),
+                "poll_interval": str(self.poll_interval),
+                "tapes_folder": self.tapes_folder,
+            }
         parser["window"] = {
             "x": str(self.window_x),
             "y": str(self.window_y),

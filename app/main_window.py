@@ -268,7 +268,7 @@ class MainWindow(QMainWindow):
         self._config.window_y = pos.y()
         self._config.window_width = size.width()
         self._config.window_height = size.height()
-        self._config.save()
+        self._config.save(include_connection=False)
 
     def _fetch_version(self):
         data = self._api.get_version()
