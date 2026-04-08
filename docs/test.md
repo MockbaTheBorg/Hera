@@ -1,42 +1,64 @@
-# Steps to test Hera.
-# These steps will:
-# Download, build and install Hercules
-# Download and install Hera
-# Download and install a minimum z/OS 2.2 environment (maintenance environment)
-#
+## Testing Hera with a minimal z/OS 2.2 environment
 
-mkdir IBM
-cd IBM
+This document describes a simple, reproducible way to test `Hera` using a local
+Hercules instance and a small z/OS 2.2 dataset. It assumes a Linux host with
+`git`, `python3`, `pip`, `wget`, and `ckd2cckd64` available.
 
-# Install Hercules
+Prerequisites
+
+- Git
+- Python 3.8+ and `venv`
+- Build tools for Hercules (see https://github.com/wrljet/hercules-helper)
+- `ckd2cckd64` utility
+
+Overview
+
+1. Build and install Hercules using `hercules-helper`.
+2. Clone and install `Hera` into a Python virtual environment.
+3. Create a minimal Hercules config and required DASD file(s).
+4. Start Hercules, then start `hera.py`, and IPL z/OS.
+
+Steps
+
+1. Create a workspace and build Hercules
+
+```sh
+mkdir -p ~/IBM && cd ~/IBM
 git clone https://github.com/wrljet/hercules-helper
 cd hercules-helper
 ./hercules-buildall.sh --flavor=sdl-hyperion
-source ~/.bashrc
-cd ..
+# Follow any build instructions printed by the script (may require sudo).
+source ~/.bashrc || true
+cd ~/IBM
+```
 
-# Install Hera
+2. Clone Hera and install Python deps
+
+```sh
 git clone https://github.com/MockbaTheBorg/Hera
+cd Hera
 python -m venv venv
 source venv/bin/activate
-pip install -r Hera/requirements.txt 
+pip install -r requirements.txt
+```
 
-# Create test env (z/OS 2.2)
-mkdir test
-cd test
-cat > hercules.cnf
-``` from here
-CPUSERIAL 000111 # CPU serial number
-CPUMODEL 8562 # CPU model number (8562=z15)
-MAINSIZE 8192 # Main storage size in megabytes 768
-XPNDSIZE 0 # Expanded storage size in megabytes
-CNSLPORT 3270 # TCP port number to which consoles connect
-HTTP PORT 8081 noauth # HTTP server
+3. Create a test directory and a Hercules config
+
+```sh
+mkdir -p ~/IBM/test && cd ~/IBM/test
+cat > test.cnf <<'EOF'
+# Minimal Hercules configuration for z/OS 2.2
+CPUSERIAL 000111
+CPUMODEL 8562
+MAINSIZE 8192
+XPNDSIZE 0
+CNSLPORT 3270
+HTTP PORT 8081 noauth
 HTTP START
-NUMCPU 4 # Number of CPUs
+NUMCPU 4
 TZOFFSET +0000
-OSTAILOR Z/OS # OS tailoring
-PGMPRDOS LICENSED # Allow OS/390 and Z/OS systems to run
+OSTAILOR Z/OS
+PGMPRDOS LICENSED
 LPARNAME ADCD
 DIAG8CMD ENABLE
 DEVTMAX 8
@@ -48,53 +70,74 @@ LOADPARM 0A80SA..
 0701 3270 *
 0580 3420
 0A80 3390 sares1.cckd cu=3990-6 sf=sf/sares1_*.sf
-``` to here
+EOF
+```
+
+4. Download DASD image(s)
+
+Replace the example URL below with your DASD source if different.
+
+```sh
 wget https://archive.org/download/zos-2.2/Dasds/sares1
 chmod 444 sares1
 ckd2cckd64 sares1 sares1.cckd
 chmod 444 sares1.cckd
-mkdir sf
+mkdir -p sf
+```
 
-# Start hercules (inside test folder)
+5. Start Hercules
+
+Run Hercules from the `~/IBM/test` folder using the config created earlier:
+
+```sh
 hercules -f test.cnf
+```
 
-# Start Hera (inside Hera folder)
-source venv/bin/activate (if not already)
+6. Start Hera
+
+In a separate terminal, activate the `Hera` virtualenv and start the GUI:
+
+```sh
+cd ~/IBM/Hera
+source venv/bin/activate
 python hera.py
+```
 
-# IPL z/OS
-Go to the CPU Tab and set the IPL dials to A80
-Press the IPL button
-(or type `IPL A80` in the Console)
-Go to the terminal at 0700
-If waiting for 'DENY' or 'CONTINUE', type `R 0,CONTINUE` and enter
-Wait for the IPL to complete (`ISF442I Server SDSF XCF communications ready`)
+7. IPL z/OS
 
-# Log in to TSO
-Go to the terminal at 0701
-Type `LOGON IBMUSER` enter
-Blindly type the password `SYS1` enter
-enter
-At ISPF menu:
-- F3 = Save and go back
-- F12 = Cancel and go back
-From TSO 'Ready' Prompt:
-- `ISPF` - Return to ISPF menu
-- `LOGOFF` - End session
+- In the Hera GUI: open the CPU tab and set the IPL dials to `A80`, then press
+   the IPL button. (Or use the Hercules console and enter `IPL A80`.)
+- Monitor the operator console (terminal 0700). If the system stops waiting
+   for an operator reply, enter `R 0,CONTINUE` on that console.
+- Wait until the IPL completes (look for messages such as
+   `ISF442I Server SDSF XCF communications ready`).
 
-# Shutdown z/OS
-Log off from TSO
-Go to the terminal at 0700
-Type `S SHUTSA`
-Wait for `IEF352I ADDRESS SPACE UNAVAILABLE`
-Type `$P JES2`
-Wait for `IEF404I JES2 - ENDED`
-Type `Z EOD`
-Wait for `IEE334I HALT EOD SUCCESSFUL`
-Type `QUIESCE`
-The CPUs will stop
+8. Log in to TSO
 
-From this point you can either:
-   IPL again
-   Close Hercules (press `Power Off` in the CPU Tab)
+- On terminal 0701 (TSO), enter `LOGON IBMUSER` and when prompted use the
+   password `SYS1` (this example credential is for testing only).
+- Press Enter to start ISPF. Common keys:
+   - F3: Save and go back
+   - F12: Cancel and go back
 
+9. Shutdown z/OS cleanly
+
+- From the MVS Operator console (0700):
+   - `S SHUTSA` and wait for `IEF352I ADDRESS SPACE UNAVAILABLE`
+   - `$P JES2` and wait for `IEF404I JES2 - ENDED`
+   - `Z EOD` and wait for `IEE334I HALT EOD SUCCESSFUL`
+   - `QUIESCE` to stop the CPUs
+
+After shutdown you can re-IPL or power off Hercules using the GUI CPU tab.
+
+Notes and troubleshooting
+
+- If `hercules` is not found after building, ensure the build output bin
+   directory is in your `PATH` (or run with the absolute path).
+- Replace DASD images with ones appropriate for your setup — the archive
+   example above is provided as a convenience and may not suit all tests.
+- For automation, consider scripting the steps above and validating console
+   output for key messages during IPL.
+ - If you need to perform a `Factory Reset` of the z/OS environment: close
+   Hercules and delete the shadow file located in the `sf` subfolder (this
+   removes any saved disk shadow state).
