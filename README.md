@@ -1,17 +1,26 @@
-# Hera — Hercules Hyperion GUI
+# Hera — A GUI for SDL Hercules (Hyperion)
 
-Hera is a graphical front-end for the [SDL Hercules](https://github.com/SDL-Hercules-390/hyperion) IBM mainframe emulator.  
-It is based on Jason (by Oleh Yuschuk) and builds on it to provide a modern PySide6 interface, offering a visual workspace for managing CPUs, DASD, tapes, card readers/punches, printers, 3270 terminals, and the operator console — all from a single window.
+Hera is a modern graphical front end for the SDL Hercules (Hyperion) IBM mainframe emulator. It provides a PySide6-based workspace that makes common operator tasks faster and more visual: managing CPUs, DASD, tape volumes, card readers and punches, printers, 3270 terminals and the operator console — all from a single application.
 
-> **Platform note:** Hera is developed and tested on Linux. It contains no OS-specific code and may work on macOS or Windows, but those platforms have not been tested.
- 
+**Platform note:** Hera is developed and exercised on Linux. The code is platform-agnostic where possible and may run on macOS or Windows, but those platforms are not tested.
+
 ![Hera screenshot](app/bitmaps/screenshot.png)
+
+---
+
+## Features
+
+- **Interactive device panels:** View and control CPUs, DASD, tape drives, card readers/punches, printers and consoles.
+- **Printer export:** Printer output can be saved/exported as PDF files for easy archival and sharing.
+- **Punched-card file support:** Save and load card decks as punched-card file images so card-based input/output can be preserved and re-used.
+- **Tape image support:** Create, read and write tape image files for storing datasets; compatible with Hercules tape handling so datasets can be transferred between Hera and the emulator.
+- **3270 terminal integration:** Full 3270 sessions with convenient screens and input handling.
 
 ---
 
 ## Requirements
 
-- Python 3.11 or newer
+- Python 3.8 or newer
 - A running SDL Hyperion Hercules instance with its REST API enabled (port 8081 by default)
 
 ---
@@ -44,7 +53,7 @@ python hera.py --host 192.168.1.10 --port 8081
 ```
 
 | Option | Default | Description |
-|--------|---------|-------------|
+|--------|---------|------------- |
 | `--host` | `127.0.0.1` | Hostname or IP of the Hercules REST API |
 | `--port` | `8081` | Port of the Hercules REST API |
 
@@ -52,10 +61,10 @@ python hera.py --host 192.168.1.10 --port 8081
 
 ## Notes
 
-- Hera saves its settings to `~/.config/hera/hera.conf`.
-- Use `File -> Preferences` to edit saved connection, appearance, and window settings from the UI.
+- Hera stores user preferences in `~/.config/hera/hera.conf`.
+- Use `File -> Preferences` in the UI to edit saved connections, appearance and window settings.
 - Command-line options override values stored in the config file.
-- The Hercules REST API must be reachable before starting Hera; otherwise the device panels will show as disconnected.
+- The Hercules REST API should be reachable before starting Hera; device panels will indicate if the connection is not available.
 
 ---
 
