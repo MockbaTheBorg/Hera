@@ -274,7 +274,108 @@ class CardEditorWidget(QWidget):
             rows.append(line[c0:c1].rstrip())
         text = "\n".join(rows).rstrip("\n")
         QGuiApplication.clipboard().setText(text)
+
+    def _delete_selection(self) -> bool:
+        if not self._has_selection():
+            return False
+
+        start, end = self._normalized_selection()
+        start_row, start_col = start
+        end_row, end_col = end
+        start_col = min(start_col, DATA_COLS)
+        end_col = min(end_col, DATA_COLS)
+
+        if start_row >= len(self._lines):
+            self._clear_selection()
+            return False
+
+        if start_row == end_row:
+            line = self._lines[start_row]
+            data = line[:DATA_COLS]
+            seq = line[DATA_COLS:]
+            new_data = (data[:start_col] + data[end_col:]).ljust(DATA_COLS)[:DATA_COLS]
+            self._lines[start_row] = new_data + seq
+        else:
+            first = self._lines[start_row]
+            last = self._lines[min(end_row, len(self._lines) - 1)]
+            merged = (first[:start_col] + last[end_col:DATA_COLS]).ljust(DATA_COLS)[:DATA_COLS]
+            self._lines[start_row] = merged + first[DATA_COLS:]
+            del self._lines[start_row + 1:end_row + 1]
+            self._renumber()
+            self._update_scroll_range()
+
+        self._cursor_row = min(start_row, max(0, len(self._lines) - 1))
+        self._cursor_col = min(start_col, DATA_COLS - 1)
         self._clear_selection()
+        self._changed = True
+        if self._auto_number:
+            self._renumber()
+        return True
+
+    def _cut_selection(self):
+        if self._read_only or not self._has_selection():
+            return
+        self._copy_selection()
+        if self._delete_selection():
+            self._ensure_cursor_visible()
+            self._update_status()
+            self.update()
+
+    def _paste_clipboard(self):
+        if self._read_only:
+            return
+
+        text = QGuiApplication.clipboard().text()
+        if not text:
+            return
+
+        text = text.replace("\r\n", "\n").replace("\r", "\n")
+        if self._has_selection():
+            self._delete_selection()
+
+        rows = text.split("\n")
+        if not rows:
+            return
+
+        self._ensure_one_line()
+        row = self._cursor_row
+        col = self._cursor_col
+
+        while row >= len(self._lines):
+            self._lines.append(pad80(""))
+
+        line = self._lines[row]
+        data = line[:DATA_COLS]
+        seq = line[DATA_COLS:]
+
+        head = data[:col]
+        tail = data[col:]
+
+        first = (head + rows[0])[:DATA_COLS]
+        self._lines[row] = first.ljust(DATA_COLS)[:DATA_COLS] + seq
+
+        if len(rows) == 1:
+            if len(first) < DATA_COLS:
+                combined = (first + tail)[:DATA_COLS]
+                self._lines[row] = combined.ljust(DATA_COLS)[:DATA_COLS] + seq
+            self._cursor_col = min(DATA_COLS - 1, len(first))
+        else:
+            insert_at = row + 1
+            for middle in rows[1:-1]:
+                self._lines.insert(insert_at, pad80(middle[:DATA_COLS]))
+                insert_at += 1
+
+            last_text = rows[-1][:DATA_COLS]
+            last_line = (last_text + tail)[:DATA_COLS]
+            self._lines.insert(insert_at, last_line.ljust(DATA_COLS)[:DATA_COLS] + (" " * SEQ_COLS))
+            self._cursor_row = insert_at
+            self._cursor_col = min(DATA_COLS - 1, len(last_text))
+
+        self._changed = True
+        self._refresh_sequence_zone()
+        self._update_scroll_range()
+        self._ensure_cursor_visible()
+        self._update_status()
         self.update()
 
     def paintEvent(self, e):
@@ -417,6 +518,11 @@ class CardEditorWidget(QWidget):
                 self._select_all()
             elif key == Qt.Key_C:
                 self._copy_selection()
+                self.update()
+            elif key == Qt.Key_X:
+                self._cut_selection()
+            elif key == Qt.Key_V:
+                self._paste_clipboard()
             return
 
         if key in (Qt.Key_Shift, Qt.Key_Control, Qt.Key_Alt, Qt.Key_Meta):
