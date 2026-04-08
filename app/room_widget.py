@@ -21,13 +21,33 @@ from PySide6.QtGui import (
 from PySide6.QtCore import Qt, Signal, QRect, QSize, QEvent
 
 from .device_base import DeviceBase
-from .theme import ROOM_CONTENT_HEIGHT, ROOM_HEIGHT, room_bg_color
+from .theme import ROOM_CONTENT_HEIGHT, ROOM_HEIGHT, ROOM_SCROLLBAR_H, room_bg_color
 LABEL_HEIGHT = 28                            # Height of the label tab above each device
 SELECTED_COLOR = QColor(96, 232, 96)         # Green highlight for selected device
 LABEL_DEFAULT_COLOR = QColor(210, 210, 210) # Default label tab background
 SLOT_PADDING = 4                             # Horizontal padding between slots
+ROOM_BOTTOM_BAND = QColor("#2d2d2d")
 
 from .device_base import bitmaps_dir as _bitmaps_dir
+
+
+class RoomStrip(QWidget):
+    """Shared room background behind the device slots."""
+
+    def __init__(self, background_color: QColor, parent=None):
+        super().__init__(parent)
+        self._background_color = QColor(background_color)
+
+    def set_background_color(self, color: QColor) -> None:
+        self._background_color = QColor(color)
+        self.update()
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.fillRect(self.rect(), self._background_color)
+        band_top = max(0, self.height() - ROOM_SCROLLBAR_H)
+        painter.fillRect(QRect(0, band_top, self.width(), ROOM_SCROLLBAR_H), ROOM_BOTTOM_BAND)
+        painter.end()
 
 
 class DeviceSlot(QWidget):
@@ -94,6 +114,10 @@ class DeviceSlot(QWidget):
         # --- Room background (below label) ---
         body_rect = QRect(0, LABEL_HEIGHT, w, h - LABEL_HEIGHT)
         painter.fillRect(body_rect, QBrush(self._background_color))
+        painter.fillRect(
+            QRect(0, h - ROOM_SCROLLBAR_H, w, ROOM_SCROLLBAR_H),
+            QBrush(ROOM_BOTTOM_BAND),
+        )
 
         # --- Device bitmap (bottom-aligned within body) ---
         if self._pixmap:
@@ -153,7 +177,7 @@ class RoomWidget(QWidget):
         self._scroll.setFrameShape(QFrame.NoFrame)
 
         # Container widget inside scroll area
-        self._container = QWidget()
+        self._container = RoomStrip(self._background_color)
         self._container.setFixedHeight(ROOM_HEIGHT)
         self._layout = QHBoxLayout(self._container)
         self._layout.setContentsMargins(4, 0, 4, 0)
@@ -181,6 +205,7 @@ class RoomWidget(QWidget):
     def set_room_background(self, color: QColor | str) -> None:
         self._background_color = QColor(color)
         self._apply_viewport_background()
+        self._container.set_background_color(self._background_color)
         for slot in self._slots:
             slot.set_background_color(self._background_color)
         self._scroll.viewport().update()
