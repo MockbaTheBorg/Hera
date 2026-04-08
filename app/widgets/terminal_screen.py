@@ -23,6 +23,17 @@ Action types emitted via key_action signal:
     'erase_eof'    — erase from cursor to end of field
     'reset'        — unlock keyboard
     'insert_toggle' — toggle insert mode
+
+Additional shortcuts:
+    Alt+1 / Alt+2 / Alt+3 — PA1 / PA2 / PA3
+    Alt+C                 — Clear
+    Alt+R                 — Reset
+    Alt+S                 — SysReq
+    Alt+A                 — Attn
+    Alt+E                 — ErInp
+    Alt+D                 — Dup
+    Alt+F                 — FldMrk
+    PgUp / PgDn           — PF7 / PF8
 """
 
 from PySide6.QtWidgets import QWidget
@@ -75,6 +86,9 @@ _PF_AIDS = {
 _KEY_AID = {
     Qt.Key_Return: _AID_ENTER,
     Qt.Key_Enter:  _AID_ENTER,
+    Qt.Key_PageUp: _PF_AIDS[7],
+    Qt.Key_PageDown: _PF_AIDS[8],
+    Qt.Key_Escape: _PF_AIDS[3],
 }
 
 # Non-AID action keys
@@ -89,7 +103,22 @@ _KEY_ACTION = {
     Qt.Key_Backspace: 'backspace',
     Qt.Key_Delete:    'delete',
     Qt.Key_Insert:    'insert_toggle',
-    Qt.Key_Escape:    'reset',
+}
+
+_ALT_AID = {
+    Qt.Key_1: _AID_PA1,
+    Qt.Key_2: _AID_PA2,
+    Qt.Key_3: _AID_PA3,
+    Qt.Key_C: _AID_CLEAR,
+}
+
+_ALT_ACTION = {
+    Qt.Key_R: 'reset',
+    Qt.Key_S: 'sysreq_attn',
+    Qt.Key_A: 'sysreq_attn',
+    Qt.Key_E: 'erase_input',
+    Qt.Key_D: 'dup',
+    Qt.Key_F: 'field_mark',
 }
 
 _DEAD_KEY_FALLBACK = {
@@ -121,6 +150,9 @@ class TerminalScreen(QWidget):
         self._keyboard_locked: bool = True
         self._insert_mode: bool     = False
         self._connected: bool       = False
+        self._shift_active: bool    = False
+        self._alt_active: bool      = False
+        self._capslock_active: bool = False
 
         # Text selection (cell addresses; None = no selection)
         self._sel_start: int | None = None
@@ -207,6 +239,37 @@ class TerminalScreen(QWidget):
         self._connected = connected
         self.update()
 
+    def _set_modifier_state(self, *, mods=None, capslock_active: bool | None = None) -> None:
+        changed = False
+        if mods is not None:
+            shift_active = bool(mods & Qt.ShiftModifier)
+            alt_active = bool(mods & Qt.AltModifier)
+            if shift_active != self._shift_active:
+                self._shift_active = shift_active
+                changed = True
+            if alt_active != self._alt_active:
+                self._alt_active = alt_active
+                changed = True
+        if capslock_active is not None and capslock_active != self._capslock_active:
+            self._capslock_active = capslock_active
+            changed = True
+        if changed:
+            self.update()
+
+    def _modifier_status_text(self) -> str:
+        return " ".join(self._modifier_slots())
+
+    def _connection_status_text(self) -> str:
+        return "CONN" if self._connected else "DISC"
+
+    def _modifier_slots(self) -> list[str]:
+        return [
+            "↑" if self._shift_active else " ",
+            "INS" if self._insert_mode else "   ",
+            "ALT" if self._alt_active else "   ",
+            "CAPS" if self._capslock_active else "    ",
+        ]
+
     # ── Painting ───────────────────────────────────────────────────────────
 
     def paintEvent(self, _event) -> None:
@@ -246,26 +309,41 @@ class TerminalScreen(QWidget):
     def _paint_oia(self, p: QPainter, oia_y: int) -> None:
         cw, ch, asc = self._cw, self._ch, self._ascent
         total_w = cw * COLS
+        metrics = p.fontMetrics()
 
         p.fillRect(0, oia_y, total_w, ch + 4, _OIA_BG)
         p.setPen(_FG_DEF)
         p.setFont(self._font)
 
         # Left side: connection / lock / insert state
-        parts: list[str] = []
-        if not self._connected:
-            parts.append("DISCONNECTED")
-        elif self._keyboard_locked:
+        parts: list[str] = [self._connection_status_text()]
+        if self._connected and self._keyboard_locked:
             parts.append("X SYSTEM")
-        if self._insert_mode:
-            parts.append("INSERT")
-        p.drawText(4, oia_y + asc, "  ".join(parts))
+        left_text = "  ".join(parts)
+        p.drawText(4, oia_y + asc, left_text)
 
         # Right side: cursor row / column (1-based)
         row, col = divmod(self._cursor_addr, COLS)
         pos_text = f"{row + 1:02d}/{col + 1:02d}"
         oia_rect = QRect(0, oia_y, total_w - 4, ch + 4)
         p.drawText(oia_rect, Qt.AlignRight | Qt.AlignVCenter, pos_text)
+
+        # Center: modifier indicators
+        modifier_text = self._modifier_status_text()
+        left_w = metrics.horizontalAdvance(left_text) + 12
+        right_w = metrics.horizontalAdvance(pos_text) + 12
+        modifier_w = metrics.horizontalAdvance("↑ INS ALT CAPS") + 8
+        center_x = max((total_w - modifier_w) // 2, 0)
+        min_x = 4 + left_w
+        max_x = total_w - right_w - modifier_w - 4
+        if max_x >= min_x:
+            center_x = min(max(center_x, min_x), max_x)
+        else:
+            center_x = min_x
+            modifier_w = max(total_w - left_w - right_w - 8, 0)
+        if modifier_w > 0:
+            modifier_rect = QRect(center_x, oia_y, modifier_w, ch + 4)
+            p.drawText(modifier_rect, Qt.AlignLeft | Qt.AlignVCenter, modifier_text)
 
     def _on_blink(self) -> None:
         self._cursor_vis = not self._cursor_vis
@@ -346,11 +424,16 @@ class TerminalScreen(QWidget):
         key  = event.key()
         mods = event.modifiers()
         ctrl = bool(mods & Qt.ControlModifier)
+        alt = bool(mods & Qt.AltModifier)
+        self._set_modifier_state(mods=mods)
 
         # Standalone modifier keys do not trigger any action or repeat.
         _MODIFIER_KEYS = (Qt.Key_Control, Qt.Key_Shift, Qt.Key_Alt, Qt.Key_Meta,
                           Qt.Key_AltGr, Qt.Key_Super_L, Qt.Key_Super_R)
         if key in _MODIFIER_KEYS:
+            return
+        if key == Qt.Key_CapsLock:
+            self._set_modifier_state(capslock_active=not self._capslock_active)
             return
 
         # ── Clipboard shortcuts (Ctrl+A / Ctrl+C / Ctrl+V) ─────────────────
@@ -387,6 +470,18 @@ class TerminalScreen(QWidget):
             self.key_action.emit('aid', bytes([_PF_AIDS[pf]]))
             return
 
+        # Alt shortcuts for common 3270 AID and local actions.
+        if alt and not ctrl:
+            aid = _ALT_AID.get(key)
+            if aid is not None:
+                self.key_action.emit('aid', bytes([aid]))
+                return
+
+            action = _ALT_ACTION.get(key)
+            if action is not None:
+                self.key_action.emit(action, b'')
+                return
+
         # AID keys (Enter etc.)
         aid = _KEY_AID.get(key)
         if aid is not None:
@@ -421,6 +516,18 @@ class TerminalScreen(QWidget):
         # Accept and swallow all other unrecognised keys so nothing propagates
         # to parent widgets (the terminal consumes all keyboard input).
         event.accept()
+
+    def keyReleaseEvent(self, event) -> None:
+        self._set_modifier_state(mods=event.modifiers())
+        event.accept()
+
+    def focusInEvent(self, event) -> None:
+        self._set_modifier_state(mods=QGuiApplication.queryKeyboardModifiers())
+        super().focusInEvent(event)
+
+    def focusOutEvent(self, event) -> None:
+        self._set_modifier_state(mods=Qt.NoModifier)
+        super().focusOutEvent(event)
 
     def inputMethodEvent(self, event) -> None:
         commit = event.commitString()
