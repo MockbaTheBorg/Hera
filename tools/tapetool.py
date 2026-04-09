@@ -1,7 +1,7 @@
+#!/usr/bin/env python3
 # Hera - Hercules Hyperion GUI - by Mockba the Borg
 # Based on Jason by Oleh Yuschuk
 #
-#!/usr/bin/env python3
 """
 Inspect and extract datasets from AWS tape images.
 
@@ -735,7 +735,7 @@ def main(argv: list[str]) -> int:
             payload = render_member_bytes(member, args.a)
         outfile.write_bytes(payload)
         if args.d or args.v or args.l or args.m is not None or args.labels:
-            print()
+            print("")
         print(f"wrote {len(payload)} bytes to {outfile}")
 
     return 0
