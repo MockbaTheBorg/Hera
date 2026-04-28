@@ -11,6 +11,7 @@ Page size: 14.5" × 11" (1044 × 792 pt) in portrait orientation.
 """
 
 import logging
+from typing import Callable
 import os
 
 logger = logging.getLogger(__name__)
@@ -159,6 +160,32 @@ def _draw_page(
             pdf.text(TEXT_X, (i + 0.75) * line_h, text)
 
 
+def _paginate_lines(lines: list[str], page_length: int) -> list[list[str]]:
+    """Split printer output into PDF pages while honoring form-feed markers."""
+    pages: list[list[str]] = []
+    current: list[str] = []
+
+    for line in lines:
+        if line == "\x0C":
+            pages.append(current)
+            current = []
+            continue
+        current.append(line)
+        if len(current) >= page_length:
+            pages.append(current)
+            current = []
+
+    if current:
+        pages.append(current)
+
+    return pages or [[]]
+
+
+def estimate_pdf_page_count(lines: list[str], page_length: int = PAGE_LINES) -> int:
+    """Return the number of pages that would be produced for *lines*."""
+    return len(_paginate_lines(lines, page_length))
+
+
 def save_as_pdf(
     lines: list,
     path: str,
@@ -166,6 +193,7 @@ def save_as_pdf(
     page_length: int = PAGE_LINES,
     color_form: str = "GREEN",
     color_holes: str = "GRAY",
+    progress_callback: Callable[[int, int], None] | None = None,
 ) -> None:
     """Render *lines* as a faithful IBM fan-fold paper PDF and write to *path*.
 
@@ -202,29 +230,13 @@ def save_as_pdf(
 
     char_spacing = _char_spacing_for_page_width(pdf, font_size)
 
-    # Split lines into pages of page_length each, honouring \x0C breaks
-    pages: list[list[str]] = []
-    current: list[str] = []
+    pages = _paginate_lines(lines, page_length)
+    total_pages = len(pages)
 
-    for line in lines:
-        if line == "\x0C":
-            # Flush current page (even if empty, FF advances to next page)
-            pages.append(current)
-            current = []
-        else:
-            current.append(line)
-            if len(current) >= page_length:
-                pages.append(current)
-                current = []
-
-    if current:
-        pages.append(current)
-
-    if not pages:
-        pages = [[]]
-
-    for page_lines in pages:
+    for index, page_lines in enumerate(pages, start=1):
         _draw_page(pdf, page_lines, font_size, line_h, color_form, color_holes, char_spacing)
+        if progress_callback is not None:
+            progress_callback(index, total_pages)
 
     pdf.output(path)
     logger.debug("PDF written: %s (%d pages, %d lines)", path, len(pages), len(lines))

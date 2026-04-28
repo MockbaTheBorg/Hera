@@ -14,12 +14,13 @@ Polling is driven by a QTimer in the main thread, with API calls
 dispatched to a background QThread worker.
 """
 
+import inspect
 import logging
 from typing import Optional
 
 from PySide6.QtWidgets import (
-    QDialog, QMainWindow, QWidget, QVBoxLayout,
-    QStatusBar, QMessageBox, QLabel
+    QApplication, QDialog, QMainWindow, QWidget, QVBoxLayout,
+    QProgressDialog, QStatusBar, QMessageBox, QLabel
 )
 from PySide6.QtCore import Qt, QTimer, QThread, Signal, QObject, Slot
 from PySide6.QtGui import QAction
@@ -41,6 +42,38 @@ logger = logging.getLogger(__name__)
 
 MIN_WIDTH = 1080
 MIN_HEIGHT = 840
+
+
+class ShutdownProgressDialog:
+    """Small modal progress dialog for printer PDF saves during shutdown."""
+
+    def __init__(self, parent: QWidget | None):
+        self._dialog = QProgressDialog(parent)
+        self._dialog.setWindowTitle("Saving Printer PDFs")
+        self._dialog.setCancelButton(None)
+        self._dialog.setMinimumDuration(0)
+        self._dialog.setAutoClose(False)
+        self._dialog.setAutoReset(False)
+        self._dialog.setWindowModality(Qt.WindowModality.ApplicationModal)
+        self._dialog.setRange(0, 0)
+        self._dialog.hide()
+
+    def update(self, label: str, current: int, total: int) -> None:
+        total = max(1, int(total))
+        current = max(0, min(int(current), total))
+        self._dialog.setLabelText(f"{label}\nPage {current} of {total}")
+        self._dialog.setRange(0, total)
+        self._dialog.setValue(current)
+        if not self._dialog.isVisible():
+            self._dialog.show()
+        QApplication.processEvents()
+
+    def close(self) -> None:
+        if not self._dialog.isVisible():
+            return
+        self._dialog.setValue(self._dialog.maximum())
+        self._dialog.close()
+        QApplication.processEvents()
 
 
 class PollerWorker(QObject):
@@ -134,10 +167,24 @@ class MainWindow(QMainWindow):
         return f"{state} {self._config.host}:{self._config.port}" if connected else f"{state} ({self._config.host}:{self._config.port})"
 
     def _run_device_hook(self, method_name: str, devices: Optional[list[DeviceBase]] = None, *,
-                         log_message: str) -> None:
+                         log_message: str, **hook_kwargs) -> None:
         for dev in devices if devices is not None else self._devices:
             try:
-                getattr(dev, method_name)()
+                method = getattr(dev, method_name)
+                signature = inspect.signature(method)
+                accepts_var_kwargs = any(
+                    parameter.kind == inspect.Parameter.VAR_KEYWORD
+                    for parameter in signature.parameters.values()
+                )
+                if accepts_var_kwargs:
+                    method(**hook_kwargs)
+                else:
+                    filtered_kwargs = {
+                        name: value
+                        for name, value in hook_kwargs.items()
+                        if name in signature.parameters
+                    }
+                    method(**filtered_kwargs)
             except Exception as exc:
                 logger.warning(log_message, exc)
 
@@ -422,7 +469,13 @@ class MainWindow(QMainWindow):
         self._poll_thread.quit()
         if not self._poll_thread.wait(5000):
             logger.warning("Polling thread did not stop cleanly before shutdown")
-        self._run_device_hook("on_app_closing", log_message="Device shutdown save failed: %s")
+        shutdown_progress = ShutdownProgressDialog(self)
+        self._run_device_hook(
+            "on_app_closing",
+            log_message="Device shutdown save failed: %s",
+            shutdown_progress=shutdown_progress.update,
+        )
+        shutdown_progress.close()
         self._run_device_hook("cleanup", log_message="Device cleanup failed during shutdown: %s")
         self._save_geometry()
         super().closeEvent(event)

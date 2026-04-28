@@ -20,7 +20,7 @@ import logging
 import os
 from collections import deque
 from datetime import datetime
-from typing import Optional
+from typing import Callable, Optional
 
 import shiboken6
 from PySide6.QtCore import QTimer, Qt, Slot
@@ -337,7 +337,10 @@ class Prt1403Device(DeviceBase):
         self._print_timer.stop()
         self._reader.stop()
 
-    def on_app_closing(self) -> None:
+    def on_app_closing(
+        self,
+        shutdown_progress: Callable[[str, int, int], None] | None = None,
+    ) -> None:
         """Persist buffered printer output to a deterministic PDF on shutdown."""
         if self._config is not None:
             raw = self._config.get_setting("shutdown", "autosave_printer_pdfs", "1").strip().lower()
@@ -349,13 +352,21 @@ class Prt1403Device(DeviceBase):
         prefix = "CON" if self._is_3215 else "PRT"
         path = os.path.join(os.getcwd(), f"{prefix}_{self._devnum}.pdf")
         try:
-            from ..widgets.printer_pdf_export import save_as_pdf
+            from ..widgets.printer_pdf_export import estimate_pdf_page_count, save_as_pdf
+            progress_label = f"Saving pdf for printer {self._devnum}..."
+            total_pages = estimate_pdf_page_count(lines, PAGE_LENGTH)
+            if shutdown_progress is not None:
+                shutdown_progress(progress_label, 0, total_pages)
             save_as_pdf(
                 lines=lines,
                 path=path,
                 font_filename=self._font_filename,
                 page_length=PAGE_LENGTH,
                 color_form=self._color_name,
+                progress_callback=(
+                    (lambda current, total: shutdown_progress(progress_label, current, total))
+                    if shutdown_progress is not None else None
+                ),
             )
             logger.info("Auto-saved printer buffer to %s", path)
         except Exception as exc:
