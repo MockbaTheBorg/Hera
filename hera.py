@@ -29,8 +29,8 @@ class _ScrollBarStyle(QProxyStyle):
     cascade never touches any other widget — no palette side-effects.
     """
 
-    _TRACK  = QColor(0x2d, 0x2d, 0x2d)
-    _HANDLE = QColor(0x88, 0x88, 0x88)
+    _TRACK = QColor("#2d2d2d")
+    _HANDLE = QColor("#888888")
 
     def drawComplexControl(self, control, option, painter, widget=None):
         if control != QStyle.CC_ScrollBar:
