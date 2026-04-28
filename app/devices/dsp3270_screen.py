@@ -135,7 +135,7 @@ class _Cell:
         self.underscore_explicit = other.underscore_explicit
 
 
-_BG_BLACK = QColor(0, 0, 0)
+_BG_BLACK = QColor("#000000")
 _FG_GREEN = COLOR_3279[0x00]
 
 
