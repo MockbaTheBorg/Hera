@@ -53,6 +53,7 @@ class CardEditorWidget(QWidget):
     _EXTRA_X = 1
     _EXTRA_Y = 2
 
+
     def __init__(self, read_only: bool = False, auto_number: bool = False, parent=None):
         super().__init__(parent)
         self.setFocusPolicy(Qt.StrongFocus)
@@ -80,8 +81,8 @@ class CardEditorWidget(QWidget):
 
         self._status = QLabel("1:1   OVR", self)
         self._status.setStyleSheet(
-            "font-family: 'Courier New', monospace; font-size: 10px;"
-            "background: #f0f0f0; border-top: 1px solid #cccccc;"
+            "font-family: 'Courier New', monospace; font-size: 12px; font-weight: bold;"
+            "color: #000000; background: #f0f0f0; border-top: 1px solid #cccccc;"
             "padding: 2px 4px;"
         )
 

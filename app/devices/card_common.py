@@ -60,6 +60,7 @@ class CardWidget(QWidget):
 
     _pixmap_cache: dict[str, Optional[QPixmap]] = {}
 
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setFocusPolicy(Qt.StrongFocus)
@@ -73,7 +74,7 @@ class CardWidget(QWidget):
         self._pos_label = QLabel("", self)
         self._pos_label.setAlignment(Qt.AlignCenter)
         self._pos_label.setStyleSheet(
-            "color: #555555; font-size: 11px; background: transparent;"
+            "color: #ffffff; font-size: 12px; font-weight: bold; background: transparent;"
         )
 
     def set_deck(self, lines: list[str], current: int = 0) -> None:
