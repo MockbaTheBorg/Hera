@@ -18,6 +18,7 @@ In 3215 mode, operator commands are dispatched via the REST API syslog endpoint.
 
 import logging
 import os
+from pathlib import Path
 from collections import deque
 from datetime import datetime
 from typing import Callable, Optional
@@ -350,7 +351,19 @@ class Prt1403Device(DeviceBase):
         if not lines:
             return
         prefix = "CON" if self._is_3215 else "PRT"
-        path = os.path.join(os.getcwd(), f"{prefix}_{self._devnum}.pdf")
+        # Determine spool folder from config (default: 'spool') and ensure it exists.
+        spool_folder = "spool"
+        if self._config is not None:
+            spool_folder = getattr(self._config, "spool_folder", spool_folder) or spool_folder
+        spool_path = Path(os.path.expanduser(spool_folder))
+        if not spool_path.is_absolute():
+            spool_path = Path.cwd() / spool_path
+        try:
+            spool_path.mkdir(parents=True, exist_ok=True)
+        except Exception:
+            pass
+        timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+        path = str(spool_path / f"{prefix}_{self._devnum}_{timestamp}.pdf")
         try:
             from ..widgets.printer_pdf_export import estimate_pdf_page_count, save_as_pdf
             progress_label = f"Saving pdf for printer {self._devnum}..."

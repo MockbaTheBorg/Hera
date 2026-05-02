@@ -423,6 +423,9 @@ class MainWindow(QMainWindow):
         self._config.port = values["port"]
         self._config.poll_interval = values["poll_interval"]
         self._config.tapes_folder = values["tapes_folder"]
+        # Spool folder for printer PDFs
+        if "spool_folder" in values:
+            self._config.spool_folder = values["spool_folder"]
         self._config.bitmap_theme = values["bitmap_theme"]
         self._config.room_background = room_background
         self._config.device_order = device_order

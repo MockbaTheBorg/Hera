@@ -33,6 +33,7 @@ from .config import (
 )
 from .devices.tape_support import validate_folder
 from .theme import DIALOG_MIN_WIDTH
+import os
 
 
 class PreferencesDialog(QDialog):
@@ -88,6 +89,11 @@ class PreferencesDialog(QDialog):
         self._tapes_folder_edit = QLineEdit(self._config.tapes_folder)
         self._tapes_folder_edit.setPlaceholderText("Relative path on the Hercules host")
         form.addRow("Tapes Folder:", self._tapes_folder_edit)
+
+        # Spool folder for printer PDF files (local to Hera — absolute or relative to Hera working dir)
+        self._spool_folder_edit = QLineEdit(getattr(self._config, "spool_folder", "spool"))
+        self._spool_folder_edit.setPlaceholderText("Absolute or relative path on local machine (default: spool)")
+        form.addRow("Spool Folder:", self._spool_folder_edit)
 
         layout.addWidget(group)
         layout.addWidget(QLabel("Changes to host, port, and poll interval are applied immediately."))
@@ -192,11 +198,22 @@ class PreferencesDialog(QDialog):
         return tab
 
     def values(self) -> dict:
+        # tapes_folder is a remote (Hercules) path and must be a folder name
+        tapes = validate_folder(self._tapes_folder_edit.text())
+
+        # spool_folder is local to Hera; allow absolute paths and ~ expansion
+        raw_spool = self._spool_folder_edit.text().strip()
+        if not raw_spool:
+            spool = "spool"
+        else:
+            spool = os.path.normpath(os.path.expanduser(raw_spool))
+
         return {
             "host": self._host_edit.text().strip(),
             "port": self._port_spin.value(),
             "poll_interval": self._poll_interval_spin.value(),
-            "tapes_folder": validate_folder(self._tapes_folder_edit.text()),
+            "tapes_folder": tapes,
+            "spool_folder": spool,
             "bitmap_theme": self._theme_combo.currentText().strip(),
             "room_background": self._room_background_edit.text().strip(),
             "device_order": self._device_order_edit.text().strip(),
@@ -217,5 +234,6 @@ class PreferencesDialog(QDialog):
 
         self._host_edit.setText(values["host"])
         self._tapes_folder_edit.setText(values["tapes_folder"])
+        self._spool_folder_edit.setText(values.get("spool_folder", "spool"))
         self._room_background_edit.setText(normalize_room_background(values["room_background"]))
         self.accept()

@@ -24,6 +24,7 @@ DEFAULTS = {
     "port": "8081",
     "poll_interval": "0.25",
     "tapes_folder": "tapes",
+    "spool_folder": "spool",
     "window_x": "-1",
     "window_y": "-1",
     "window_width": "1024",
@@ -91,6 +92,7 @@ class Config:
         self.port: int = int(DEFAULTS["port"])
         self.poll_interval: float = float(DEFAULTS["poll_interval"])
         self.tapes_folder: str = DEFAULTS["tapes_folder"]
+        self.spool_folder: str = DEFAULTS["spool_folder"]
         self.window_x: int = int(DEFAULTS["window_x"])
         self.window_y: int = int(DEFAULTS["window_y"])
         self.window_width: int = int(DEFAULTS["window_width"])
@@ -130,6 +132,7 @@ class Config:
         self.port = self._int_value(conn, "port", self.port)
         self.poll_interval = self._float_value(conn, "poll_interval", self.poll_interval)
         self.tapes_folder = conn.get("tapes_folder", self.tapes_folder)
+        self.spool_folder = conn.get("spool_folder", self.spool_folder)
 
         win = parser["window"] if "window" in parser else {}
         self.window_x = self._int_value(win, "x", self.window_x)
@@ -161,6 +164,7 @@ class Config:
                 "port": str(self.port),
                 "poll_interval": str(self.poll_interval),
                 "tapes_folder": self.tapes_folder,
+                "spool_folder": self.spool_folder,
             }
         parser["window"] = {
             "x": str(self.window_x),

@@ -42,12 +42,14 @@ def _warning(parent, message: str) -> None:
     QMessageBox.warning(parent, "Validation", message)
 
 
-def validate_folder(folder: str) -> str:
-    """Strip leading '.' and '/' chars; fall back to 'tapes' if empty."""
-    folder = folder.strip()
+def validate_folder(folder: str, default: str = "tapes") -> str:
+    """Strip leading '.' and '/' chars; fall back to `default` if empty.
+
+    Default is 'tapes' for tape folders; callers can override (e.g. 'spool')."""
+    folder = (folder or "").strip()
     while folder and folder[0] in (".", "/"):
         folder = folder.lstrip("./").lstrip("/")
-    return folder or "tapes"
+    return folder or default
 
 
 def validate_tape_filename(filename: str) -> Optional[str]:
