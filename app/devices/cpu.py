@@ -62,6 +62,24 @@ class CpuDevice(DeviceBase):
         self._ipl_panel: Optional[IplPanel] = None
         self._pending_command: Optional[str] = None
         self._ipl_address: int = 0   # persisted across panel recreations
+        # Load persisted IPL address from config (if available)
+        try:
+            if getattr(self, "config", None) is not None:
+                raw = (self.config.get_setting("devices", "cpu_ipl_address", "") or "").strip()
+                if raw:
+                    ipl_val = None
+                    if raw.lower().startswith("0x"):
+                        ipl_val = int(raw, 0)
+                    else:
+                        try:
+                            ipl_val = int(raw, 16)
+                        except Exception:
+                            ipl_val = int(raw, 0)
+                    if ipl_val is not None:
+                        self._ipl_address = int(ipl_val) & 0xFFF
+        except Exception:
+            # Non-fatal: ignore config parsing errors
+            pass
         self._signals = _CpuSignals()
 
         # Last fetched data for room overlay
@@ -151,6 +169,14 @@ class CpuDevice(DeviceBase):
             return
         digits = [d.get_value() for d in self._ipl_panel._dials]
         self._ipl_address = (digits[0] << 8) | (digits[1] << 4) | digits[2]
+        # Persist to config so the value survives application restarts
+        try:
+            if getattr(self, "config", None) is not None:
+                # Store as hex with 0x prefix, padded to 3 nibbles
+                self.config.set_setting("devices", "cpu_ipl_address", f"0x{self._ipl_address:03X}")
+        except Exception:
+            # Ignore write errors; not critical
+            pass
 
     def _on_blink_mode(self, mode: str) -> None:
         self._blink_mode = mode
