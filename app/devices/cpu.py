@@ -127,8 +127,8 @@ class CpuDevice(DeviceBase):
 
     @staticmethod
     def _status_text_for(mipsrate: float, running: bool, waiting: bool) -> str:
-        state = "RUNNING" if running else "WAIT" if waiting else "STOPPED"
-        return f"MIPS {mipsrate:.1f}  {state}"
+        state = f" RUNNING at {mipsrate/1000000:.2f} MIPS" if running else " WAIT" if waiting else " STOPPED"
+        return f"{state}"
 
     def create_workspace(self, parent: QWidget) -> QWidget:
         if self._workspace is None:

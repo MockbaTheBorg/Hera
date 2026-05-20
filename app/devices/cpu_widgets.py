@@ -302,7 +302,7 @@ class CpuWorkspace(QWidget):
         sep4 = QFrame(); sep4.setFrameShape(QFrame.HLine); layout.addWidget(sep4)
 
         rates_row = QHBoxLayout()
-        self._mips = QLabel("MIPS: 0.00")
+        self._mips = QLabel("MIPS: 0.00 /")
         self._sios = QLabel("SIOS: 0")
         self._mips.setStyleSheet(mono_style)
         self._sios.setStyleSheet(mono_style)
@@ -334,5 +334,5 @@ class CpuWorkspace(QWidget):
         for key, lbl in self._ar_labels.items():
             lbl.setText(ar.get(key, "00000000"))
 
-        self._mips.setText(f"MIPS: {rates.get('mipsrate', 0):.2f}")
+        self._mips.setText(f"MIPS: {rates.get('mipsrate', 0)/1000000:4.2f} /")
         self._sios.setText(f"SIOS: {rates.get('siosrate', 0)}")
