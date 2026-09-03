@@ -2,6 +2,7 @@
 # Hera - Hercules Hyperion GUI - by Mockba the Borg
 # Based on Jason by Oleh Yuschuk
 #
+#!/usr/bin/env python3
 """
 Inspect and extract datasets from AWS tape images.
 
