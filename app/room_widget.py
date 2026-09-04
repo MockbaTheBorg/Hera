@@ -276,6 +276,12 @@ class RoomWidget(QWidget):
         total = sum(s.width() + 2 for s in self._slots) + 8
         self._container.setFixedWidth(max(total, self._scroll.viewport().width()))
 
+    def select_index(self, index: int) -> None:
+        """Select a device slot exactly as a mouse click would. Used by the
+        scripting API so a scripted selection behaves identically to a real
+        click (deselect-of-old, highlight, device_selected emit)."""
+        self._on_slot_clicked(index)
+
     def _on_slot_clicked(self, index: int):
         if index == self._selected_index:
             return

@@ -169,6 +169,9 @@ class CpuDevice(DeviceBase):
             return
         digits = [d.get_value() for d in self._ipl_panel._dials]
         self._ipl_address = (digits[0] << 8) | (digits[1] << 4) | digits[2]
+        self._persist_ipl_address()
+
+    def _persist_ipl_address(self) -> None:
         # Persist to config so the value survives application restarts
         try:
             if getattr(self, "config", None) is not None:
@@ -177,6 +180,16 @@ class CpuDevice(DeviceBase):
         except Exception:
             # Ignore write errors; not critical
             pass
+
+    def set_ipl_address(self, addr: int) -> None:
+        """Set and persist the IPL address, updating the dial widget if it
+        currently exists. Used by the scripting API — works whether or not
+        the CPU has ever been selected (the dials simply show the correct
+        value whenever the panel is next created)."""
+        self._ipl_address = addr & 0xFFF
+        self._persist_ipl_address()
+        if self._ipl_panel is not None:
+            self._ipl_panel.set_ipl_address(self._ipl_address)
 
     def _on_blink_mode(self, mode: str) -> None:
         self._blink_mode = mode

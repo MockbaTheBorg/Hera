@@ -64,6 +64,8 @@ from app.device_base import set_bitmap_theme
 from app.api_client import HerculesAPI
 from app.device_registry import DeviceRegistry
 from app.main_window import MainWindow
+from app.scripting.bridge import MainThreadBridge
+from app.scripting.server import ScriptingServer
 
 logging.basicConfig(
     level=logging.INFO,
@@ -174,6 +176,11 @@ def main():
         device_builder=lambda: build_device_list(api, registry, config),
     )
     window.show()
+
+    bridge = MainThreadBridge()
+    scripting_server = ScriptingServer(bridge=bridge, config=config, api=api, main_window=window)
+    scripting_server.start()
+    app.aboutToQuit.connect(scripting_server.stop)
 
     sys.exit(app.exec())
 

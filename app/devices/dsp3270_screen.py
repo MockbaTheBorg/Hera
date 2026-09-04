@@ -599,8 +599,8 @@ class Screen3270:
         self._mark_modified(self.cursor)
 
     def erase_input(self) -> None:
-        for c in self.cells:
-            if not c.is_attr and not self._is_protected_cell(c):
+        for a, c in enumerate(self.cells):
+            if not c.is_attr and not self._is_protected(a):
                 c.byte = 0x00
                 c.modified = False
         for c in self.cells:
@@ -615,10 +615,6 @@ class Screen3270:
     def _is_protected(self, addr: int) -> bool:
         attr = self._find_attr(addr)
         return attr is not None and attr.prot
-
-    @staticmethod
-    def _is_protected_cell(c: _Cell) -> bool:
-        return c.is_attr or c.prot
 
     def _find_attr(self, addr: int) -> Optional[_Cell]:
         for offset in range(CELLS):
@@ -753,6 +749,22 @@ class Screen3270:
             snap.append((_cell_to_char(c), fg, bg, hl_us))
 
         return snap
+
+    def protected_mask(self) -> list[bool]:
+        """Per-cell protection state (True = protected/display-only, False =
+        an operator-enterable field), single pass like build_snapshot(). Used
+        by the scripting API so callers can compute field boundaries instead
+        of guessing keystroke/Tab counts."""
+        mask = []
+        current_attr: Optional[_Cell] = self._find_attr(0)
+        for i in range(CELLS):
+            c = self.cells[i]
+            if c.is_attr:
+                current_attr = c
+                mask.append(False)
+                continue
+            mask.append(bool(current_attr is not None and current_attr.prot))
+        return mask
 
     def build_text_lines(self, locked: bool = True, insert: bool = False, cursor: int = 0) -> list[str]:
         lines = []

@@ -400,15 +400,7 @@ class Tn3270Session(QObject):
             return False
         if cmd_byte in _CMD_EAU:
             if self._screen.is_formatted():
-                for c in self._screen.cells:
-                    if not c.is_attr and not self._screen._is_protected_cell(c):
-                        c.byte = 0x00
-                        c.modified = False
-                for c in self._screen.cells:
-                    if c.is_attr and not c.prot:
-                        c.modified = False
-                addr = self._screen._next_unprotected(0, forward=True)
-                self._screen.cursor = addr if addr is not None else 0
+                self._screen.erase_input()
             else:
                 self._screen.erase()
             self._screen.current_aid = _AID_NONE

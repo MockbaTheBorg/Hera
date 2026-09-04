@@ -326,6 +326,26 @@ class MainWindow(QMainWindow):
         else:
             self._version_label.clear()
 
+    def devices(self) -> list[DeviceBase]:
+        """Live, room-ordered device list. Used by the scripting API."""
+        return list(self._devices)
+
+    def active_device_index(self) -> int:
+        return self._room.selected_index
+
+    def is_connected(self) -> bool:
+        """Whether Hera currently sees Hercules as reachable (updated once
+        per poll cycle by PollerWorker, same state the status bar shows)."""
+        return self._connected
+
+    def select_device_by_index(self, index: int) -> None:
+        """Bring a device to the front exactly as clicking its room slot would."""
+        self._room.select_index(index)
+
+    @property
+    def config(self) -> Config:
+        return self._config
+
     @Slot(int)
     def _on_device_selected(self, index: int):
         if 0 <= index < len(self._devices):
@@ -402,8 +422,12 @@ class MainWindow(QMainWindow):
         dialog = PreferencesDialog(self._config, self)
         if dialog.exec() != QDialog.Accepted:
             return
+        self.apply_settings(dialog.values())
 
-        values = dialog.values()
+    def apply_settings(self, values: dict) -> None:
+        """Apply a full settings dict exactly as the Preferences dialog's OK
+        handler would, without requiring the dialog to be shown. Shared by
+        the dialog and the scripting API."""
         endpoint_changed = (
             values["host"] != self._config.host
             or values["port"] != self._config.port

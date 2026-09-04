@@ -51,7 +51,7 @@ from PySide6.QtWidgets import (
 from ..device_base import DeviceBase, ButtonDef, DeviceContext
 from ..theme import WORKSPACE_FRAME
 from ..widgets.mini_screen import MiniScreenOverlay
-from ..widgets.terminal_screen import ROWS, COLS, _FG_DEF, _OIA_BG
+from ..widgets.terminal_screen import ROWS, COLS, _FG_DEF, _OIA_BG, _AID_ENTER
 from ..widgets.terminal_style import DSP3270_FONT_SIZE_PX, terminal_font_family
 from .dsp3270_session import Tn3270Session
 
@@ -88,6 +88,9 @@ class Dsp3270Device(DeviceBase):
         self._ws_container = None # QWidget with 4px margins wrapping _scroll — created once, reused
         self._mini_lines: list[str] = []
         self._mini_cells: list = []
+        self._cursor_row: int = 0
+        self._cursor_col: int = 0
+        self._protected_mask: list[bool] = []
         self._session: Optional[Tn3270Session] = None
         self._import_error: str = ""
         self._host = self.host or "127.0.0.1"
@@ -132,10 +135,35 @@ class Dsp3270Device(DeviceBase):
         if self._workspace is not None:
             self._workspace.setFocus()
 
-    def _enqueue_session_action(self, action: str, data: bytes = b"") -> None:
+    def _enqueue_session_action(self, action: str, data: bytes = b"", *, focus: bool = True) -> None:
         if self._session is not None:
             self._session.enqueue_action(action, data)
-        self._focus_workspace()
+        if focus:
+            self._focus_workspace()
+
+    def type_text(self, text: str) -> None:
+        """Type text into the terminal without needing the workspace to exist
+        or the device to be selected. Encodes each character (cp037) and
+        sends an AID Enter only on '\\n' — same behavior as pasting text via
+        Ctrl+V (TerminalScreen._emit_clipboard_text), but delivered straight
+        to the session so it works headlessly. A trailing newline is not
+        required: text with none simply sits pending, exactly as if a human
+        had typed it and not yet pressed Enter."""
+        batch = bytearray()
+        for ch in text:
+            if ch == "\n":
+                if batch:
+                    self._enqueue_session_action("input", bytes(batch), focus=False)
+                    batch.clear()
+                self._enqueue_session_action("aid", bytes([_AID_ENTER]), focus=False)
+                continue
+            if ch.isprintable():
+                try:
+                    batch.extend(ch.encode("cp037"))
+                except (UnicodeEncodeError, LookupError):
+                    pass
+        if batch:
+            self._enqueue_session_action("input", bytes(batch), focus=False)
 
     def _build_setup_dialog(self, parent: QWidget | None) -> tuple[QDialog, QSpinBox]:
         dlg = QDialog(parent)
@@ -291,10 +319,12 @@ class Dsp3270Device(DeviceBase):
         status = ("  ".join(parts)).ljust(COLS - 5) + f"{r+1:02d}/{c+1:02d}"
         oia_cells = [(ch, _FG_DEF, _OIA_BG, False) for ch in status[:COLS].ljust(COLS)]
         self._mini_cells = list(cells) + oia_cells
+        self._cursor_row, self._cursor_col = r, c
         if self._session is not None:
             self._mini_lines = self._session._screen.build_text_lines(
                 locked=locked, insert=insert, cursor=cursor
             )
+            self._protected_mask = self._session._screen.protected_mask()
 
     @Slot(str, bytes)
     def _route_key(self, action: str, data: bytes) -> None:
@@ -314,11 +344,11 @@ class Dsp3270Device(DeviceBase):
         self._btn_disconnect = button
         self._on_connection_state_changed(self._session_connected())
 
-    def _send_aid(self, aid_byte: int) -> None:
-        self._enqueue_session_action("aid", bytes([aid_byte]))
+    def _send_aid(self, aid_byte: int, *, focus: bool = True) -> None:
+        self._enqueue_session_action("aid", bytes([aid_byte]), focus=focus)
 
-    def _send_action(self, action: str, data: bytes = b'') -> None:
-        self._enqueue_session_action(action, data)
+    def _send_action(self, action: str, data: bytes = b'', *, focus: bool = True) -> None:
+        self._enqueue_session_action(action, data, focus=focus)
 
     def _load_font_size(self) -> int:
         if self.config is None:
@@ -330,16 +360,12 @@ class Dsp3270Device(DeviceBase):
             return DSP3270_FONT_SIZE_PX
         return max(10, min(32, value))
 
-    def _do_setup(self) -> None:
-        parent = self._ws_container or self._workspace
-        dlg, font_size = self._build_setup_dialog(parent)
-        if dlg.exec() != QDialog.DialogCode.Accepted:
-            return
-
-        new_size = font_size.value()
+    def set_font_size(self, new_size: int) -> None:
+        """Non-interactive core of the Setup dialog's font-size change. Used
+        by both the dialog and the scripting API."""
+        new_size = max(10, min(32, int(new_size)))
         if new_size == self._font_size_px:
             return
-
         self._font_size_px = new_size
         if self.config is not None:
             self.config.set_setting("devices", f"dsp3270_font_size_{self.devnum}", str(new_size))
@@ -347,6 +373,13 @@ class Dsp3270Device(DeviceBase):
             self._workspace.set_font_size(new_size)
         if self._scroll is not None:
             self._scroll.setWidgetResizable(False)
+
+    def _do_setup(self) -> None:
+        parent = self._ws_container or self._workspace
+        dlg, font_size = self._build_setup_dialog(parent)
+        if dlg.exec() != QDialog.DialogCode.Accepted:
+            return
+        self.set_font_size(font_size.value())
 
     def _do_connect(self) -> None:
         if self._session is not None:

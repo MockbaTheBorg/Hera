@@ -349,6 +349,91 @@ class TapeDevice(DeviceBase):
 
     # ── Button callbacks ──────────────────────────────────────────────────────
 
+    # ── Scripting-API-callable business logic ──────────────────────────────
+    #
+    # Mount/Unmount/New have no local-only visual state to fake (the reel
+    # bitmap and drive display are driven purely by Hercules' polled
+    # assignment string, see poll() above) — human and scripted callers
+    # converge on the same devinit/hetinit commands. These methods hold the
+    # validated logic (file listing, RO/RW conflict checks); the click
+    # handlers below are thin wrappers that add the interactive dialog and
+    # confirm-box steps around them. A ValueError signals a condition that
+    # would have shown a warning dialog to a human.
+
+    def list_tape_files(self) -> list:
+        client = self._api
+        if client is None:
+            raise ValueError("Not connected to Hercules")
+        return self._get_tape_list(client)
+
+    def mount_tape(self, filename: str, readonly: bool = False) -> dict:
+        client = self._api
+        if client is None:
+            raise ValueError("Not connected to Hercules")
+
+        tape_path = f"{self._tapes_folder}/{filename}"
+        mounts = self._find_mounts(client, tape_path)
+
+        if readonly:
+            rw_units = [devnum for devnum, prot in mounts if not prot]
+            if rw_units:
+                raise ValueError(
+                    f"'{filename}' is already mounted read-write on unit {rw_units[0]}. "
+                    "Unmount it there first before mounting read-only here."
+                )
+        else:
+            if mounts:
+                units = ", ".join(devnum for devnum, _ in mounts)
+                raise ValueError(
+                    f"'{filename}' is already mounted on unit {units}. "
+                    "Unmount it there first before mounting read-write here."
+                )
+
+        cmd = f"devinit {self.devnum} {tape_path}"
+        if readonly:
+            cmd += " ro"
+        self._run_and_refresh(client, cmd)
+        return {"devnum": self.devnum, "filename": filename, "readonly": readonly}
+
+    def unmount_tape(self) -> dict:
+        client = self._api
+        if client is None:
+            raise ValueError("Not connected to Hercules")
+        self._run_and_refresh(client, f"devinit {self.devnum} *", loaded=False)
+        return {"devnum": self.devnum, "loaded": False}
+
+    def new_tape(self, filename: str, volser: str, owner: str = "", overwrite: bool = False) -> dict:
+        client = self._api
+        if client is None:
+            raise ValueError("Not connected to Hercules")
+
+        if self._loaded and not overwrite:
+            raise ValueError(
+                f"A tape is currently mounted on device {self.devnum}. "
+                "Pass overwrite=true to replace it."
+            )
+
+        tape_path = f"{self._tapes_folder}/{filename}"
+        if self._file_exists(client, tape_path):
+            mounts = self._find_mounts(client, tape_path)
+            if mounts:
+                units = ", ".join(devnum for devnum, _ in mounts)
+                raise ValueError(
+                    f"'{filename}' is currently mounted on unit {units}. "
+                    "Unmount it there first before overwriting."
+                )
+            if not overwrite:
+                raise ValueError(f"'{filename}' already exists. Pass overwrite=true to replace it.")
+
+        hetinit_cmd = f"sh hetinit -d {tape_path} {volser}"
+        if owner:
+            hetinit_cmd += f" {owner}"
+        self._run_cmd(client, hetinit_cmd)
+        self._run_and_refresh(client, f"devinit {self.devnum} {tape_path}", loaded=True)
+        return {"devnum": self.devnum, "filename": filename, "volser": volser}
+
+    # ── Button callbacks (interactive dialogs, then the logic above) ───────
+
     def _on_mount_clicked(self):
         client = self._api
         if client is None:
@@ -363,41 +448,16 @@ class TapeDevice(DeviceBase):
         if dlg.exec() != QDialog.Accepted:
             return
 
-        tape_path = f"{self._tapes_folder}/{dlg.selected_file()}"
-        mounts = self._find_mounts(client, tape_path)
-
-        if dlg.is_readonly():
-            # RO mount: deny if any other unit has it mounted RW
-            rw_units = [devnum for devnum, prot in mounts if not prot]
-            if rw_units:
-                self._warning(
-                    "Mount Tape",
-                    f"'{dlg.selected_file()}' is already mounted read-write "
-                    f"on unit {rw_units[0]}.\n"
-                    "Unmount it there first before mounting read-only here.",
-                )
-                return
-        else:
-            # RW mount: deny if mounted anywhere else (RO or RW)
-            if mounts:
-                units = ", ".join(devnum for devnum, _ in mounts)
-                self._warning(
-                    "Mount Tape",
-                    f"'{dlg.selected_file()}' is already mounted on unit {units}.\n"
-                    "Unmount it there first before mounting read-write here.",
-                )
-                return
-
-        cmd = f"devinit {self.devnum} {tape_path}"
-        if dlg.is_readonly():
-            cmd += " ro"
-        self._run_and_refresh(client, cmd)
+        try:
+            self.mount_tape(dlg.selected_file(), readonly=dlg.is_readonly())
+        except ValueError as exc:
+            self._warning("Mount Tape", str(exc))
 
     def _on_unmount_clicked(self):
-        client = self._api
-        if client is None:
-            return
-        self._run_and_refresh(client, f"devinit {self.devnum} *", loaded=False)
+        try:
+            self.unmount_tape()
+        except ValueError as exc:
+            self._warning("Unmount Tape", str(exc))
 
     def _on_new_clicked(self):
         client = self._api
@@ -416,28 +476,22 @@ class TapeDevice(DeviceBase):
             return
 
         tape_path = f"{self._tapes_folder}/{dlg.filename()}"
-
         if self._file_exists(client, tape_path):
             mounts = self._find_mounts(client, tape_path)
-            if mounts:
-                units = ", ".join(devnum for devnum, _ in mounts)
-                self._warning(
-                    "New Tape",
-                    f"'{dlg.filename()}' is currently mounted on unit {units}.\n"
-                    "Unmount it there first before overwriting.",
-                )
-                return
-            if not self._confirm(
+            if not mounts and not self._confirm(
                 "New Tape",
                 f"'{dlg.filename()}' already exists. Overwrite it?",
             ):
                 return
 
-        hetinit_cmd = f"sh hetinit -d {tape_path} {dlg.volser()}"
-        if dlg.owner():
-            hetinit_cmd += f" {dlg.owner()}"
-        self._run_cmd(client, hetinit_cmd)
-        self._run_and_refresh(client, f"devinit {self.devnum} {tape_path}", loaded=True)
+        try:
+            # The human has already cleared every confirm dialog above by
+            # this point, so overwrite=True here just skips the equivalent
+            # ValueError guards inside new_tape() (the mounted-elsewhere
+            # conflict still raises and is shown as a warning below).
+            self.new_tape(dlg.filename(), dlg.volser(), owner=dlg.owner(), overwrite=True)
+        except ValueError as exc:
+            self._warning("New Tape", str(exc))
 
     # ── Room overlay ──────────────────────────────────────────────────────────
 

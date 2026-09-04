@@ -75,6 +75,9 @@ class ConsoleWorkspace(QWidget):
     def focus_input(self):
         self._command_bar.focus_input()
 
+    def current_text(self) -> str:
+        return self._log.toPlainText()
+
     @Slot(list, bool)
     def _apply_update(self, lines: list, full_refresh: bool):
         """Called in the main thread via queued connection."""
