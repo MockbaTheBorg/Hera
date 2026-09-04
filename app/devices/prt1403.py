@@ -24,9 +24,9 @@ from datetime import datetime
 from typing import Callable, Optional
 
 import shiboken6
-from PySide6.QtCore import QTimer, Qt, Slot
+from PySide6.QtCore import QObject, QTimer, Qt, Signal, Slot
 from PySide6.QtGui import QColor, QFontDatabase, QPainter
-from PySide6.QtWidgets import QDialog, QDialogButtonBox, QHBoxLayout, QLabel, QMessageBox, QPushButton, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QCheckBox, QDialog, QDialogButtonBox, QHBoxLayout, QLabel, QMessageBox, QPushButton, QVBoxLayout, QWidget
 
 from ..device_base import DeviceBase, ButtonDef, DeviceContext
 from ..socket_reader import SocketLineReader as SocketReader
@@ -105,6 +105,13 @@ def _load_font(filename: str) -> str:
         return ""
     logger.debug("Loaded font %s → family %s", filename, families[0])
     return families[0]
+
+
+class _CommandOutputSignal(QObject):
+    """QObject bridge so poll() (worker thread) can hand command output to the
+    GUI thread — direct calls into _enqueue_line() from poll() would touch
+    self._print_timer (a QTimer) from the wrong thread."""
+    received = Signal(list)
 
 
 # ── Device plugin ─────────────────────────────────────────────────────────────
@@ -219,9 +226,16 @@ class Prt1403Device(DeviceBase):
             default=self._default_blank_line_delay_ms(),
             label="printer blank-line delay",
         )
+        self._print_command_output: bool = self._load_bool_setting(
+            key=f"printer_print_command_output_{self._devnum}",
+            default=True,
+        )
         self._print_timer = QTimer()
         self._print_timer.setSingleShot(True)
         self._print_timer.timeout.connect(self._drain_print_queue)
+
+        self._command_output_signal = _CommandOutputSignal()
+        self._command_output_signal.received.connect(self._on_command_output)
 
     def _set_socket_button(self, button, enabled: bool):
         if button is not None and shiboken6.isValid(button):
@@ -328,7 +342,9 @@ class Prt1403Device(DeviceBase):
         cmd = self._pending_command
         self._pending_command = None
         if cmd and api_client is not None:
-            api_client.syslog_feed.send_command(cmd)
+            output = api_client.syslog_feed.send_command(cmd)
+            if self._print_command_output and output:
+                self._command_output_signal.received.emit(output)
 
     def on_selected(self, api_client=None) -> None:
         if self._workspace is not None:
@@ -432,6 +448,23 @@ class Prt1403Device(DeviceBase):
             )
             self._config.set_setting("devices", key, str(default))
             return default
+
+    def _load_bool_setting(self, *, key: str, default: bool) -> bool:
+        """Return a persisted boolean device setting, seeding it on first read."""
+        if self._config is None:
+            return default
+        raw = self._config.get_setting("devices", key, "")
+        if raw == "":
+            self._config.set_setting("devices", key, "1" if default else "0")
+            return default
+        return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+    def _set_print_command_output(self, enabled: bool) -> None:
+        self._print_command_output = enabled
+        if self._config is not None:
+            self._config.set_setting(
+                "devices", f"printer_print_command_output_{self._devnum}", "1" if enabled else "0"
+            )
 
     def _delay_ms_for_line(self, line: str) -> int:
         """Blank or whitespace-only lines print faster than content lines."""
@@ -547,6 +580,7 @@ class Prt1403Device(DeviceBase):
             self._test_line("Workspace created", "yes" if self._workspace is not None else "no"),
             self._test_line("Pending command", self._pending_command or "none"),
             self._test_line("Command input", "enabled" if self._is_3215 else "disabled"),
+            self._test_line("Print command output", "yes" if self._print_command_output else "no"),
             self._test_line("Config host", self._config.host if self._config is not None else "n/a"),
             self._test_line("Config port", self._config.port if self._config is not None else "n/a"),
             self._test_line("Poll interval", self._config.poll_interval if self._config is not None else "n/a"),
@@ -612,6 +646,13 @@ class Prt1403Device(DeviceBase):
     def _on_send_command(self, cmd: str) -> None:
         self._pending_command = cmd
         self.mark_room_activity()
+
+    @Slot(list)
+    def _on_command_output(self, lines: list) -> None:
+        """GUI-thread slot: echo command output lines through the normal print queue."""
+        for line in lines:
+            if line:
+                self._enqueue_line(line)
 
     def room_light_levels(self) -> Optional[list[float]]:
         if self.room_light_origin is None:
@@ -720,12 +761,22 @@ class Prt1403Device(DeviceBase):
 
         layout.addLayout(btn_row)
 
-        cancel_box = QDialogButtonBox(QDialogButtonBox.StandardButton.Cancel)
-        cancel_box.rejected.connect(dlg.reject)
-        layout.addWidget(cancel_box)
+        print_cmd_check = None
+        if self._is_3215:
+            print_cmd_check = QCheckBox("Print command output")
+            print_cmd_check.setChecked(self._print_command_output)
+            layout.addWidget(print_cmd_check)
+
+        button_box = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        button_box.accepted.connect(dlg.accept)
+        button_box.rejected.connect(dlg.reject)
+        layout.addWidget(button_box)
 
         if dlg.exec() != QDialog.DialogCode.Accepted:
             return
+
+        if print_cmd_check is not None:
+            self._set_print_command_output(print_cmd_check.isChecked())
 
         new_name = selected["name"]
         if new_name == self._color_name:
