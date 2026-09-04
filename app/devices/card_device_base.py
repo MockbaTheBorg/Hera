@@ -8,6 +8,7 @@ Shared base helpers for card-deck devices.
 from dataclasses import dataclass
 from typing import Optional
 
+import shiboken6
 from PySide6.QtWidgets import QFileDialog, QFrame, QMessageBox, QPushButton, QVBoxLayout, QWidget
 
 from ..device_base import DeviceBase, DeviceContext
@@ -179,14 +180,15 @@ class BaseCardDeckDevice(DeviceBase):
     def _toggle_view(self) -> None:
         if self._deck_view is None:
             return
+        btn = self._toggle_btn if self._toggle_btn is not None and shiboken6.isValid(self._toggle_btn) else None
         if self._deck_view.mode == "card":
             self._deck_view.set_mode("editor")
-            if self._toggle_btn is not None:
-                self._toggle_btn.setText("Card view")
+            if btn is not None:
+                btn.setText("Card view")
         else:
             self._deck_view.set_mode("card")
-            if self._toggle_btn is not None:
-                self._toggle_btn.setText("Editor view")
+            if btn is not None:
+                btn.setText("Editor view")
 
     def _toggle_button_label(self) -> str:
         if self._deck_view and self._deck_view.mode == "editor":
