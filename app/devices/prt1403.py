@@ -26,7 +26,7 @@ from typing import Callable, Optional
 import shiboken6
 from PySide6.QtCore import QObject, QTimer, Qt, Signal, Slot
 from PySide6.QtGui import QColor, QFontDatabase, QPainter
-from PySide6.QtWidgets import QCheckBox, QDialog, QDialogButtonBox, QHBoxLayout, QLabel, QMessageBox, QPushButton, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QCheckBox, QDialog, QDialogButtonBox, QFormLayout, QHBoxLayout, QLabel, QMessageBox, QPushButton, QSpinBox, QVBoxLayout, QWidget
 
 from ..device_base import DeviceBase, ButtonDef, DeviceContext
 from ..socket_reader import SocketLineReader as SocketReader
@@ -72,6 +72,9 @@ DEFAULT_3215_LINE_DELAY_MS = 10
 DEFAULT_3215_BLANK_LINE_DELAY_MS = 1
 DEFAULT_1403_LINE_DELAY_MS = 30
 DEFAULT_1403_BLANK_LINE_DELAY_MS = 3
+DEFAULT_FONT_SIZE_PX = 13
+PRINTER_FONT_SIZE_PX_MIN = 6
+PRINTER_FONT_SIZE_PX_MAX = 30
 
 # ── Paper color palettes ──────────────────────────────────────────────────────
 # Each entry: (dark_QColor, light_QColor) matching prt1403 reference RGB values.
@@ -230,6 +233,7 @@ class Prt1403Device(DeviceBase):
             key=f"printer_print_command_output_{self._devnum}",
             default=True,
         )
+        self._font_size_px: int = self._load_font_size()
         self._print_timer = QTimer()
         self._print_timer.setSingleShot(True)
         self._print_timer.timeout.connect(self._drain_print_queue)
@@ -295,6 +299,7 @@ class Prt1403Device(DeviceBase):
             self._workspace = PrinterWorkspace(
                 parent,
                 font_family=self._font_family,
+                font_size_px=self._font_size_px,
                 bar_even=bar_even,
                 bar_odd=bar_odd,
                 page_length=PAGE_LENGTH,
@@ -428,8 +433,8 @@ class Prt1403Device(DeviceBase):
     def _default_blank_line_delay_ms(self) -> int:
         return DEFAULT_3215_BLANK_LINE_DELAY_MS if self._is_3215 else DEFAULT_1403_BLANK_LINE_DELAY_MS
 
-    def _load_delay_ms(self, *, key: str, default: int, label: str) -> int:
-        """Return a non-negative per-device printer pacing delay in milliseconds."""
+    def _load_int_setting(self, *, key: str, default: int, minimum: int = 0, label: str = "") -> int:
+        """Return a persisted per-device integer setting, seeding it on first read."""
         if self._config is None:
             return default
         raw = self._config.get_setting("devices", key, "")
@@ -437,17 +442,21 @@ class Prt1403Device(DeviceBase):
             self._config.set_setting("devices", key, str(default))
             return default
         try:
-            return max(0, int(float(raw)))
+            return max(minimum, int(float(raw)))
         except (TypeError, ValueError):
             logger.warning(
-                "Invalid %s for %s: %r; using default %s ms",
-                label,
+                "Invalid %s for %s: %r; using default %s",
+                label or key,
                 self._devnum,
                 raw,
                 default,
             )
             self._config.set_setting("devices", key, str(default))
             return default
+
+    def _load_delay_ms(self, *, key: str, default: int, label: str) -> int:
+        """Return a non-negative per-device printer pacing delay in milliseconds."""
+        return self._load_int_setting(key=key, default=default, minimum=0, label=label)
 
     def _load_bool_setting(self, *, key: str, default: bool) -> bool:
         """Return a persisted boolean device setting, seeding it on first read."""
@@ -465,6 +474,31 @@ class Prt1403Device(DeviceBase):
             self._config.set_setting(
                 "devices", f"printer_print_command_output_{self._devnum}", "1" if enabled else "0"
             )
+
+    def _load_font_size(self) -> int:
+        if self._config is None:
+            return DEFAULT_FONT_SIZE_PX
+        raw = self._config.get_setting(
+            "devices", f"printer_font_size_{self._devnum}", str(DEFAULT_FONT_SIZE_PX)
+        )
+        try:
+            value = int(raw)
+        except (TypeError, ValueError):
+            return DEFAULT_FONT_SIZE_PX
+        return max(PRINTER_FONT_SIZE_PX_MIN, min(PRINTER_FONT_SIZE_PX_MAX, value))
+
+    def set_font_size(self, new_size: int) -> None:
+        """Non-interactive core of the Setup dialog's font-size change. Used
+        by both the dialog and the scripting API. Only affects the workspace
+        paper — the room mini-print keeps its own fixed size (_mini_font_px)."""
+        new_size = max(PRINTER_FONT_SIZE_PX_MIN, min(PRINTER_FONT_SIZE_PX_MAX, int(new_size)))
+        if new_size == self._font_size_px:
+            return
+        self._font_size_px = new_size
+        if self._config is not None:
+            self._config.set_setting("devices", f"printer_font_size_{self._devnum}", str(new_size))
+        if self._workspace is not None:
+            self._workspace.set_font_size(new_size)
 
     def _delay_ms_for_line(self, line: str) -> int:
         """Blank or whitespace-only lines print faster than content lines."""
@@ -581,6 +615,7 @@ class Prt1403Device(DeviceBase):
             self._test_line("Pending command", self._pending_command or "none"),
             self._test_line("Command input", "enabled" if self._is_3215 else "disabled"),
             self._test_line("Print command output", "yes" if self._print_command_output else "no"),
+            self._test_line("Paper font size", f"{self._font_size_px}px"),
             self._test_line("Config host", self._config.host if self._config is not None else "n/a"),
             self._test_line("Config port", self._config.port if self._config is not None else "n/a"),
             self._test_line("Poll interval", self._config.poll_interval if self._config is not None else "n/a"),
@@ -745,11 +780,12 @@ class Prt1403Device(DeviceBase):
         # Cancel: do nothing
 
     def _do_setup(self) -> None:
-        """Open paper color selection dialog."""
+        """Open the device setup dialog: paper color, font size, and (3215 only)
+        the command-output-echo toggle."""
         dlg = QDialog()
         dlg.setWindowFlags(Qt.Dialog)
         dlg.setMinimumWidth(DIALOG_MIN_WIDTH)
-        dlg.setWindowTitle("Paper Color")
+        dlg.setWindowTitle("Printer Setup")
         layout = QVBoxLayout(dlg)
         layout.addWidget(QLabel("Select paper color:"))
 
@@ -760,6 +796,13 @@ class Prt1403Device(DeviceBase):
             btn_row.addWidget(self._paper_color_button(name, selected, dlg))
 
         layout.addLayout(btn_row)
+
+        form = QFormLayout()
+        font_size = QSpinBox()
+        font_size.setRange(PRINTER_FONT_SIZE_PX_MIN, PRINTER_FONT_SIZE_PX_MAX)
+        font_size.setValue(self._font_size_px)
+        form.addRow("Font size:", font_size)
+        layout.addLayout(form)
 
         print_cmd_check = None
         if self._is_3215:
@@ -774,6 +817,8 @@ class Prt1403Device(DeviceBase):
 
         if dlg.exec() != QDialog.DialogCode.Accepted:
             return
+
+        self.set_font_size(font_size.value())
 
         if print_cmd_check is not None:
             self._set_print_command_output(print_cmd_check.isChecked())

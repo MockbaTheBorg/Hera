@@ -65,8 +65,9 @@ _DEVICE_ACTIONS = {
     "DSP": ["select", "dsp3270/type_text", "dsp3270/aid", "dsp3270/screen",
             "dsp3270/setup", "dsp3270/connect", "dsp3270/disconnect"],
     "PRT": ["select", "printer/output", "printer/discard", "printer/save", "printer/paper_color",
-            "printer/test", "printer/connect", "printer/disconnect",
-            "printer/type (3215 console printer only)"],
+            "printer/font_size", "printer/test", "printer/connect", "printer/disconnect",
+            "printer/type (3215 console printer only)",
+            "printer/print_command_output (3215 console printer only)"],
     "RDR": ["select", "reader/deck", "reader/load", "reader/new", "reader/submit", "reader/setup",
             "reader/toggle_view"],
     "PCH": ["select", "punch/deck", "punch/discard", "punch/save", "punch/setup",
@@ -500,6 +501,38 @@ def printer_paper_color(ctx, path_params, body):
     return ctx.bridge.call_on_gui_thread(_do)
 
 
+def printer_font_size(ctx, path_params, body):
+    index = _index(path_params)
+    font_size = (body or {}).get("font_size")
+    if font_size is None:
+        raise ApiError(400, "Missing 'font_size'")
+
+    def _do():
+        device = _get_device(ctx, index)
+        _require_class(device, "PRT")
+        device.set_font_size(font_size)
+        return {"font_size": device._font_size_px}
+
+    return ctx.bridge.call_on_gui_thread(_do)
+
+
+def printer_print_command_output(ctx, path_params, body):
+    index = _index(path_params)
+    if "enabled" not in (body or {}):
+        raise ApiError(400, "Missing 'enabled'")
+    enabled = bool((body or {})["enabled"])
+
+    def _do():
+        device = _get_device(ctx, index)
+        _require_class(device, "PRT")
+        if not device._is_3215:
+            raise ApiError(400, "This PRT device has no command input (not a 3215 console printer)")
+        device._set_print_command_output(enabled)
+        return {"enabled": enabled}
+
+    return ctx.bridge.call_on_gui_thread(_do)
+
+
 # ── card reader / punch ──────────────────────────────────────────────────────
 
 def _build_setup_values(device, body):
@@ -902,6 +935,12 @@ ROUTES: list[RouteSpec] = [
               "Save the printer's buffered output as a PDF", {"path": "string (optional)"}),
     RouteSpec("POST", "/devices/{index}/printer/paper_color", printer_paper_color,
               "Change the printer paper color", {"color": "string"}),
+    RouteSpec("POST", "/devices/{index}/printer/font_size", printer_font_size,
+              "Change the printer workspace's paper font size (does not affect the room mini-print)",
+              {"font_size": "int (6-30)"}),
+    RouteSpec("POST", "/devices/{index}/printer/print_command_output", printer_print_command_output,
+              "Toggle echoing 3215 command output onto the console printer (3215 only)",
+              {"enabled": "bool"}),
     RouteSpec("POST", "/devices/{index}/printer/test", printer_test,
               "Trigger the printer's built-in test printout", {}),
     RouteSpec("POST", "/devices/{index}/printer/connect", printer_connect,

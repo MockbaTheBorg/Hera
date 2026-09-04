@@ -27,6 +27,7 @@ class PrinterWorkspace(QWidget):
     Parameters
     ----------
     font_family      : font family name passed to GreenBarPaper
+    font_size_px     : initial paper font size in pixels (default: 13)
     bar_even         : even-line band color (default: white)
     bar_odd          : odd-line band color (default: #DDFFDD)
     lines_per_band   : lines sharing the same band color (default: 1)
@@ -41,6 +42,7 @@ class PrinterWorkspace(QWidget):
         self,
         parent=None,
         font_family: str = "",
+        font_size_px: int = 13,
         bar_even: QColor = None,
         bar_odd: QColor = None,
         has_command_input: bool = False,
@@ -64,6 +66,7 @@ class PrinterWorkspace(QWidget):
             bar_even=bar_even,
             bar_odd=bar_odd,
             font_family=font_family,
+            font_size_px=font_size_px,
             page_length=page_length,
             side_margin_chars=side_margin_chars,
         )
@@ -98,6 +101,9 @@ class PrinterWorkspace(QWidget):
     # ------------------------------------------------------------------
     # Public methods
     # ------------------------------------------------------------------
+
+    def set_font_size(self, font_size_px: int) -> None:
+        self._paper.set_font_size(font_size_px)
 
     def focus_input(self) -> None:
         """Set keyboard focus to the command field (no-op when no command input)."""

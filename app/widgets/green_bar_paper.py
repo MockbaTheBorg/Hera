@@ -42,6 +42,7 @@ class GreenBarPaper(QTextEdit):
         lines_per_band: int = 3,
         page_header_lines: int = 6,
         font_family: str = "",
+        font_size_px: int = 13,
         page_length: int = 0,
         side_margin_chars: int = 0,
         parent=None,
@@ -56,14 +57,12 @@ class GreenBarPaper(QTextEdit):
         self._raw_lines: list[str] = []
         self._line_count = 0   # text lines (not counting perf blocks)
         self._band_pos = 0     # position within current page for band cycling
+        self._font_family = font_family or "Courier New"
+        self._font_size_px = max(1, font_size_px)
 
         self.setReadOnly(True)
         self.setLineWrapMode(QTextEdit.LineWrapMode.NoWrap)
-
-        font = QFont(font_family or "Courier New")
-        font.setStyleHint(QFont.StyleHint.TypeWriter)
-        font.setPixelSize(13)
-        self.setFont(font)
+        self._apply_font()
 
         self.setStyleSheet(
             f"QTextEdit {{"
@@ -72,6 +71,23 @@ class GreenBarPaper(QTextEdit):
             f"}}"
             + SCROLLBAR_QSS
         )
+
+    def _apply_font(self) -> None:
+        font = QFont(self._font_family)
+        font.setStyleHint(QFont.StyleHint.TypeWriter)
+        font.setPixelSize(self._font_size_px)
+        self.setFont(font)
+        self.document().setDefaultFont(font)
+
+    def set_font_size(self, font_size_px: int) -> None:
+        """Live-resize the paper's font; already-rendered lines and band
+        colors re-flow to the new size (band height comes from line height,
+        not a stored pixel value, so it follows automatically)."""
+        font_size_px = max(1, font_size_px)
+        if font_size_px == self._font_size_px:
+            return
+        self._font_size_px = font_size_px
+        self._apply_font()
 
     # ------------------------------------------------------------------
     # Band color helpers
