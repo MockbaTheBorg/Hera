@@ -5,6 +5,7 @@
 
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
+    QCheckBox,
     QComboBox,
     QColorDialog,
     QDialog,
@@ -52,6 +53,7 @@ class PreferencesDialog(QDialog):
         tabs.addTab(self._build_connection_tab(), "Connection")
         tabs.addTab(self._build_appearance_tab(), "Appearance")
         tabs.addTab(self._build_window_tab(), "Window")
+        tabs.addTab(self._build_api_tab(), "API")
         root.addWidget(tabs)
 
         location = QLabel(f"Config file: {CONFIG_FILE}")
@@ -197,6 +199,48 @@ class PreferencesDialog(QDialog):
         layout.addStretch()
         return tab
 
+    def _build_api_tab(self) -> QWidget:
+        tab = QWidget(self)
+        layout = QVBoxLayout(tab)
+
+        group = QGroupBox("Scripting API", tab)
+        form = QFormLayout(group)
+
+        enabled = self._config.get_setting("scripting_api", "enabled", "0") == "1"
+        self._api_enabled_check = QCheckBox("Enabled")
+        self._api_enabled_check.setChecked(enabled)
+        form.addRow(self._api_enabled_check)
+
+        self._api_host_edit = QLineEdit(self._config.get_setting("scripting_api", "host", "127.0.0.1"))
+        form.addRow("Host:", self._api_host_edit)
+
+        self._api_port_spin = QSpinBox()
+        self._api_port_spin.setRange(1, 65535)
+        self._api_port_spin.setValue(int(self._config.get_setting("scripting_api", "port", "8765")))
+        form.addRow("Port:", self._api_port_spin)
+
+        self._api_token_edit = QLineEdit(self._config.get_setting("scripting_api", "token", ""))
+        self._api_token_edit.setPlaceholderText("Optional — blank means no authentication required")
+        form.addRow("Bearer Token:", self._api_token_edit)
+
+        layout.addWidget(group)
+        hint = QLabel(
+            "The scripting API lets external tools operate Hera's devices as if "
+            "clicking and typing directly. Changes here take effect the next time Hera starts."
+        )
+        hint.setWordWrap(True)
+        layout.addWidget(hint)
+        layout.addStretch()
+        return tab
+
+    def _save_api_settings(self) -> None:
+        self._config.set_setting(
+            "scripting_api", "enabled", "1" if self._api_enabled_check.isChecked() else "0"
+        )
+        self._config.set_setting("scripting_api", "host", self._api_host_edit.text().strip() or "127.0.0.1")
+        self._config.set_setting("scripting_api", "port", str(self._api_port_spin.value()))
+        self._config.set_setting("scripting_api", "token", self._api_token_edit.text().strip())
+
     def values(self) -> dict:
         # tapes_folder is a remote (Hercules) path and must be a folder name
         tapes = validate_folder(self._tapes_folder_edit.text())
@@ -231,9 +275,13 @@ class PreferencesDialog(QDialog):
         if values["room_background"] and not is_valid_room_background(values["room_background"]):
             QMessageBox.warning(self, "Validation", "Room background must be a hex color like #9da89b.")
             return
+        if self._api_enabled_check.isChecked() and not self._api_host_edit.text().strip():
+            QMessageBox.warning(self, "Validation", "Scripting API host is required.")
+            return
 
         self._host_edit.setText(values["host"])
         self._tapes_folder_edit.setText(values["tapes_folder"])
         self._spool_folder_edit.setText(values.get("spool_folder", "spool"))
         self._room_background_edit.setText(normalize_room_background(values["room_background"]))
+        self._save_api_settings()
         self.accept()
