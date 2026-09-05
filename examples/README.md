@@ -32,6 +32,7 @@ Hercules/z/OS guest (console, CPU, 3270 terminal, JCL).
 | `07_reader_deck_edit.sh` | Load lines into the card reader deck, read back, toggle view, clear |
 | `08_dsp3270_font_and_connect.py` | Resize 3270 font, disconnect/reconnect the terminal socket |
 | `09_backup_and_restore_preferences.sh` | Back up all preferences, change poll interval, restore exactly |
+| `10_reader_line_editor.sh` | Build/edit a card reader deck one TSO/ISPF-EDIT-style line command at a time (`reader/editor`) instead of replacing it whole |
 
 ## hercules/
 

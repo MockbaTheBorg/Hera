@@ -69,7 +69,7 @@ _DEVICE_ACTIONS = {
             "printer/type (3215 console printer only)",
             "printer/print_command_output (3215 console printer only)"],
     "RDR": ["select", "reader/deck", "reader/load", "reader/new", "reader/submit", "reader/setup",
-            "reader/toggle_view"],
+            "reader/toggle_view", "reader/editor"],
     "PCH": ["select", "punch/deck", "punch/discard", "punch/save", "punch/setup",
             "punch/toggle_view", "punch/connect", "punch/disconnect"],
     "TAPE": ["select", "tape/files", "tape/mount", "tape/unmount", "tape/new", "tape/status"],
@@ -572,6 +572,7 @@ def reader_load(ctx, path_params, body):
         _require_class(device, "RDR")
         deck = _ensure_deck_view(device, ctx.bridge.headless_parent)
         deck.set_lines(lines)
+        device._editor_ptr = 0
         return {"count": len(lines)}
 
     return ctx.bridge.call_on_gui_thread(_do)
@@ -585,6 +586,7 @@ def reader_new(ctx, path_params, body):
         _require_class(device, "RDR")
         deck = _ensure_deck_view(device, ctx.bridge.headless_parent)
         deck.clear()
+        device._editor_ptr = 0
         return {"cleared": True}
 
     return ctx.bridge.call_on_gui_thread(_do)
@@ -625,6 +627,32 @@ def reader_toggle_view(ctx, path_params, body):
         _ensure_deck_view(device, ctx.bridge.headless_parent)
         device._toggle_view()
         return {"mode": device._deck_view.mode}
+
+    return ctx.bridge.call_on_gui_thread(_do)
+
+
+def reader_editor(ctx, path_params, body):
+    index = _index(path_params)
+    command = (body or {}).get("command")
+    if not isinstance(command, str) or not command.strip():
+        raise ApiError(400, "'command' must be a non-empty string")
+
+    def _do():
+        from ..devices.card_line_editor import apply_command, describe_ptr, EditorCommandError
+
+        device = _get_device(ctx, index)
+        _require_class(device, "RDR")
+        deck = _ensure_deck_view(device, ctx.bridge.headless_parent)
+        lines = list(deck.lines)
+        try:
+            new_ptr, extra = apply_command(lines, device._editor_ptr, command)
+        except EditorCommandError as exc:
+            raise ApiError(400, str(exc))
+        deck.set_lines(lines)
+        device._editor_ptr = new_ptr
+        result = describe_ptr(lines, new_ptr)
+        result.update(extra)
+        return result
 
     return ctx.bridge.call_on_gui_thread(_do)
 
@@ -859,6 +887,21 @@ def get_preferences(ctx, path_params, body):
     return ctx.bridge.call_on_gui_thread(lambda: _read_preferences(ctx))
 
 
+# ── application lifecycle ────────────────────────────────────────────────────
+
+def shutdown(ctx, path_params, body):
+    def _do():
+        from PySide6.QtWidgets import QApplication
+
+        ctx.main_window.close()
+        app = QApplication.instance()
+        if app is not None:
+            app.quit()
+        return {"shutting_down": True}
+
+    return ctx.bridge.call_on_gui_thread(_do)
+
+
 def set_preferences(ctx, path_params, body):
     def _do():
         current = _read_preferences(ctx)
@@ -964,6 +1007,10 @@ ROUTES: list[RouteSpec] = [
                "auto_number": "bool (optional)"}),
     RouteSpec("POST", "/devices/{index}/reader/toggle_view", reader_toggle_view,
               "Toggle the card reader deck between editor and card view", {}),
+    RouteSpec("POST", "/devices/{index}/reader/editor", reader_editor,
+              "Run one TSO-EDIT-style line command against the card reader deck "
+              "(TOP/BOTTOM/END/UP/DOWN/FIND/CHANGE/INSERT/REPLACE/LIST)",
+              {"command": "string"}),
     RouteSpec("GET", "/devices/{index}/punch/deck", punch_deck,
               "Read the card punch deck content", {}),
     RouteSpec("POST", "/devices/{index}/punch/discard", punch_discard,
@@ -996,4 +1043,6 @@ ROUTES: list[RouteSpec] = [
     RouteSpec("POST", "/preferences", set_preferences,
               "Change global preferences (room background, theme, etc.) without opening the dialog",
               {"...": "any subset of the fields returned by GET /preferences"}),
+    RouteSpec("POST", "/shutdown", shutdown,
+              "Run each device's shutdown hook and quit Hera itself, same as closing the window", {}),
 ]

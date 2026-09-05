@@ -45,19 +45,16 @@ class Pch3525Device(BaseCardDeckDevice):
     ):
         super().__init__(context)
 
-        # Socket reader (started in create_workspace)
+        # Socket reader — created eagerly (like PRT) so headless/scripted
+        # access (connect/deck/etc. via the scripting API) works without
+        # first having opened this device's GUI workspace.
         self._reader: Optional[SocketReader] = None
         self._btn_connect = None
         self._btn_disconnect = None
         self._disconnect_dlg = None
         self._skip_separator_cards = True
 
-    # ── DeviceBase interface ──────────────────────────────────────────────────
-
-    def create_workspace(self, parent: QWidget) -> QWidget:
-        first_create = self._container is None
-        widget = self._create_deck_container(parent)
-        if first_create and self._port:
+        if self._port:
             self._reader = SocketReader(
                 self._host,
                 self._port,
@@ -68,7 +65,11 @@ class Pch3525Device(BaseCardDeckDevice):
             self._reader.line_received.connect(self._on_line_received)
             self._reader.connected_changed.connect(self._on_connection_changed)
             self._reader.start()
-        return widget
+
+    # ── DeviceBase interface ──────────────────────────────────────────────────
+
+    def create_workspace(self, parent: QWidget) -> QWidget:
+        return self._create_deck_container(parent)
 
     def get_buttons(self) -> list[ButtonDef]:
         return [

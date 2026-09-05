@@ -50,6 +50,7 @@ class Rdr3505Device(BaseCardDeckDevice):
     ):
         super().__init__(context)
         self._submit_btn: Optional[QPushButton]  = None
+        self._editor_ptr: int = 0  # line pointer for the reader/editor scripting API
 
         # Thread-safe signals for submit completion
         self._sig = _SubmitSignals()
