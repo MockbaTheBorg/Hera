@@ -2,13 +2,14 @@
 # Based on Jason by Oleh Yuschuk
 #
 """
-IBM 3270 Model 2 terminal screen widget.
+IBM 3270 terminal screen widget.
 
-Renders an 80×24 data grid plus one OIA (Operator Information Area) status
-row at the bottom.  Accepts cell snapshots from Tn3270Session and converts
-keyboard events to 3270 action signals consumed by the session thread.
+Renders a rows×cols data grid (model-dependent; defaults to 80×24, Model 2)
+plus one OIA (Operator Information Area) status row at the bottom. Accepts
+cell snapshots from Tn3270Session and converts keyboard events to 3270
+action signals consumed by the session thread.
 
-Cell snapshot format (list of 1920 tuples):
+Cell snapshot format (list of rows*cols tuples):
     (char: str, fg: QColor, bg: QColor, underscore: bool)
 
 Action types emitted via key_action signal:
@@ -131,21 +132,27 @@ _DEAD_KEY_FALLBACK = {
 
 
 class TerminalScreen(QWidget):
-    """80×24 3270 terminal display with OIA status line (row 25)."""
+    """3270 terminal display, sized to an arbitrary rows×cols monitor model,
+    with an OIA status line as the row past the data grid."""
 
     # Emitted for every key event that maps to a 3270 action.
     # (action_type: str, data: bytes)
     key_action = Signal(str, bytes)
 
-    def __init__(self, parent=None, *, font_size_px: int = DSP3270_FONT_SIZE_PX):
+    def __init__(self, parent=None, *, font_size_px: int = DSP3270_FONT_SIZE_PX,
+                 rows: int = ROWS, cols: int = COLS):
         super().__init__(parent)
         self.setFocusPolicy(Qt.StrongFocus)
         self.setAttribute(Qt.WA_OpaquePaintEvent)
         self.setAttribute(Qt.WA_InputMethodEnabled)
 
+        self._rows = rows
+        self._cols = cols
+        self._cells_count = rows * cols
+
         # Blank initial state: all cells = green space on black
         blank = (' ', _FG_DEF, _BG, False)
-        self._cells: list = [blank] * CELLS
+        self._cells: list = [blank] * self._cells_count
         self._cursor_addr: int  = 0
         self._keyboard_locked: bool = True
         self._insert_mode: bool     = False
@@ -207,7 +214,7 @@ class TerminalScreen(QWidget):
     # ── Qt sizing ──────────────────────────────────────────────────────────
 
     def sizeHint(self) -> QSize:
-        return QSize(self._cw * COLS, self._ch * (ROWS + 1) + 4)
+        return QSize(self._cw * self._cols, self._ch * (self._rows + 1) + 4)
 
     def minimumSizeHint(self) -> QSize:
         return self.sizeHint()
@@ -279,8 +286,8 @@ class TerminalScreen(QWidget):
 
         sel = self._sel_range()
 
-        for addr in range(CELLS):
-            row, col = divmod(addr, COLS)
+        for addr in range(self._cells_count):
+            row, col = divmod(addr, self._cols)
             x = col * cw
             y = row * ch
             char, fg, bg, us = self._cells[addr]
@@ -303,12 +310,12 @@ class TerminalScreen(QWidget):
                 p.setPen(fg)
                 p.drawLine(x, ul_y, x + cw - 1, ul_y)
 
-        self._paint_oia(p, ROWS * ch)
+        self._paint_oia(p, self._rows * ch)
         p.end()
 
     def _paint_oia(self, p: QPainter, oia_y: int) -> None:
         cw, ch, asc = self._cw, self._ch, self._ascent
-        total_w = cw * COLS
+        total_w = cw * self._cols
         metrics = p.fontMetrics()
 
         p.fillRect(0, oia_y, total_w, ch + 4, _OIA_BG)
@@ -323,7 +330,7 @@ class TerminalScreen(QWidget):
         p.drawText(4, oia_y + asc, left_text)
 
         # Right side: cursor row / column (1-based)
-        row, col = divmod(self._cursor_addr, COLS)
+        row, col = divmod(self._cursor_addr, self._cols)
         pos_text = f"{row + 1:02d}/{col + 1:02d}"
         oia_rect = QRect(0, oia_y, total_w - 4, ch + 4)
         p.drawText(oia_rect, Qt.AlignRight | Qt.AlignVCenter, pos_text)
@@ -359,10 +366,10 @@ class TerminalScreen(QWidget):
     # ── Selection helpers ──────────────────────────────────────────────────
 
     def _cell_at(self, pos) -> int:
-        """Convert a mouse position to a clamped cell address (0 .. CELLS-1)."""
-        col = min(max(pos.x() // self._cw, 0), COLS - 1)
-        row = min(max(pos.y() // self._ch, 0), ROWS - 1)
-        return row * COLS + col
+        """Convert a mouse position to a clamped cell address (0 .. cells_count-1)."""
+        col = min(max(pos.x() // self._cw, 0), self._cols - 1)
+        row = min(max(pos.y() // self._ch, 0), self._rows - 1)
+        return row * self._cols + col
 
     def _sel_range(self):
         """Return a range covering the current selection, or None."""
@@ -379,13 +386,13 @@ class TerminalScreen(QWidget):
         if sel is None:
             return ""
         lo, hi = sel.start, sel.stop - 1
-        lo_row, lo_col = divmod(lo, COLS)
-        hi_row, hi_col = divmod(hi, COLS)
+        lo_row, lo_col = divmod(lo, self._cols)
+        hi_row, hi_col = divmod(hi, self._cols)
         lines = []
         for row in range(lo_row, hi_row + 1):
             col_start = lo_col if row == lo_row else 0
-            col_end   = hi_col if row == hi_row else COLS - 1
-            chars = [self._cells[row * COLS + c][0] for c in range(col_start, col_end + 1)]
+            col_end   = hi_col if row == hi_row else self._cols - 1
+            chars = [self._cells[row * self._cols + c][0] for c in range(col_start, col_end + 1)]
             lines.append(''.join(chars).rstrip())
         # Strip trailing blank lines
         while lines and not lines[-1]:
@@ -439,7 +446,7 @@ class TerminalScreen(QWidget):
         # ── Clipboard shortcuts (Ctrl+A / Ctrl+C / Ctrl+V) ─────────────────
         if ctrl and key == Qt.Key_A:
             self._sel_start = 0
-            self._sel_end   = CELLS - 1
+            self._sel_end   = self._cells_count - 1
             self.update()
             return
 

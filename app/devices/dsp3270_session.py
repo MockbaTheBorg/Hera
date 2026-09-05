@@ -11,7 +11,6 @@ from typing import Optional
 
 from PySide6.QtCore import QObject, Signal
 
-from ..widgets.terminal_screen import ROWS, COLS, CELLS
 from .dsp3270_protocol import (
     AID_NONE as _AID_NONE,
     AID_SF as _AID_SF,
@@ -24,11 +23,13 @@ from .dsp3270_protocol import (
     CMD_RMA as _CMD_RMA,
     CMD_W as _CMD_W,
     CMD_WSF as _CMD_WSF,
+    DEFAULT_MODEL as _DEFAULT_MODEL,
     DO as _DO,
     DONT as _DONT,
     EOR as _EOR,
     IAC as _IAC,
     IP as _IP,
+    MODEL_DIMENSIONS as _MODEL_DIMENSIONS,
     OPT_BINARY as _OPT_BINARY,
     OPT_EOR as _OPT_EOR,
     OPT_TTYPE as _OPT_TTYPE,
@@ -49,10 +50,12 @@ from .dsp3270_protocol import (
     SF_OUTBOUND_DS as _SF_OUTBOUND_DS,
     SF_QUERY_REPLY as _SF_QUERY_REPLY,
     SF_READ_PARTITION as _SF_READ_PARTITION,
-    TERMINAL_TYPE as _TERMINAL_TYPE,
     WILL as _WILL,
     WONT as _WONT,
+    build_impl_parts_body as _build_impl_parts_body,
+    build_usable_area_body as _build_usable_area_body,
     encode_addr as _encode_addr,
+    terminal_type_for_model as _terminal_type_for_model,
 )
 from .dsp3270_screen import Screen3270
 
@@ -70,7 +73,7 @@ class Tn3270Session(QObject):
     screen_updated = Signal(list, int, bool, bool)
     connected_changed = Signal(bool)
 
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, *, model: int = _DEFAULT_MODEL):
         super().__init__(parent)
         self._host: str = "127.0.0.1"
         self._port: int = 3270
@@ -83,7 +86,10 @@ class Tn3270Session(QObject):
         self._thread: Optional[threading.Thread] = None
         self._input_queue: queue.Queue = queue.Queue()
         self._insert_mode: bool = False
-        self._screen = Screen3270()
+        self._model = model
+        self._rows, self._cols = _MODEL_DIMENSIONS[model]
+        self._terminal_type = _terminal_type_for_model(model)
+        self._screen = Screen3270(self._rows, self._cols)
         self._sock: Optional[socket.socket] = None
         self._buf = bytearray()
         self._iac_buf = bytearray()
@@ -357,7 +363,7 @@ class Tn3270Session(QObject):
 
     def _handle_subneg(self, payload: bytes) -> None:
         if payload and payload[0] == _OPT_TTYPE and len(payload) >= 2 and payload[1] == 0x01:
-            ttype = _TERMINAL_TYPE
+            ttype = self._terminal_type
             if self._devnum:
                 ttype += f"@{self._devnum}"
             encoded = ttype.encode('ascii')
@@ -417,7 +423,7 @@ class Tn3270Session(QObject):
     def _send_read_buffer(self) -> None:
         out = bytearray([self._screen.current_aid])
         out.extend(_encode_addr(self._screen.cursor))
-        for i in range(CELLS):
+        for i in range(self._screen.cells_count):
             c = self._screen.cells[i]
             if c.is_attr:
                 out.append(0x1D)
@@ -493,7 +499,7 @@ class Tn3270Session(QObject):
     def _send_query_reply(
         self, request_all: bool = True, codes: list | None = None, equivalent_and_list: bool = False
     ) -> None:
-        if _TERMINAL_TYPE.endswith("-E"):
+        if self._terminal_type.endswith("-E"):
             base_supported = list(_QUERY_PROFILE_ORDER)
         else:
             base_supported = [_QC_USABLE, _QC_ALPHA]
@@ -528,28 +534,17 @@ class Tn3270Session(QObject):
         return struct.pack(">HB", 3 + len(data), sf_id) + data
 
     def _build_query_body(self, code: int) -> Optional[bytes]:
+        if code == _QC_USABLE:
+            return _build_usable_area_body(self._rows, self._cols)
+        if code == _QC_IMPL_PARTS:
+            return _build_impl_parts_body(self._rows, self._cols)
+
         profile_body = _QUERY_PROFILE_BODIES.get(code)
         if profile_body is not None:
             return profile_body
 
-        if code == _QC_USABLE:
-            return struct.pack(
-                ">BBHHBHHHHBBH",
-                0x01,
-                0x00,
-                COLS,
-                ROWS,
-                0x01,
-                10,
-                741,
-                2,
-                111,
-                9,
-                12,
-                CELLS,
-            )
         if code == _QC_ALPHA:
-            return struct.pack(">BHB", 1, CELLS, 0x00)
+            return struct.pack(">BHB", 1, self._screen.cells_count, 0x00)
         if code == _QC_COLOR:
             reply = struct.pack(">BBBB", 0x00, 8, 0x00, 0xF4)
             for attr in range(0xF1, 0xF8):
@@ -563,8 +558,6 @@ class Tn3270Session(QObject):
             return reply
         if code == _QC_REPLY_MODES:
             return struct.pack(">BB", 0x00, 0x01)
-        if code == _QC_IMPL_PARTS:
-            return struct.pack(">BBHHHH", 0x00, 0x00, ROWS, COLS, ROWS, COLS)
         return None
 
     def _process_action(self, action: str, data: bytes) -> None:

@@ -6,10 +6,28 @@ Shared TN3270 protocol constants and helpers.
 """
 
 import codecs
+import struct
 
 from ..widgets.terminal_screen import CELLS
 
-TERMINAL_TYPE = "IBM-3279-2-E"
+# ── Monitor model geometry ────────────────────────────────────────────────────
+# Real 3270 model row/col counts. Model is a per-device, user-selectable setting
+# (Dsp3270Device Setup dialog); default is Model 2, matching Hera's original
+# fixed behavior.
+MODEL_DIMENSIONS = {
+    2: (24, 80),
+    3: (32, 80),
+    4: (43, 80),
+    5: (27, 132),
+}
+DEFAULT_MODEL = 2
+
+
+def terminal_type_for_model(model: int) -> str:
+    return f"IBM-3279-{model}-E"
+
+
+TERMINAL_TYPE = terminal_type_for_model(DEFAULT_MODEL)
 
 IAC = 0xFF
 WILL = 0xFB
@@ -97,9 +115,6 @@ QUERY_PROFILE_ORDER = [
 ]
 
 QUERY_PROFILE_BODIES = {
-    QC_USABLE: bytes.fromhex(
-        "01 00 00 50 00 18 01 00 0a 02 e5 00 02 00 6f 09 0c 07 80"
-    ),
     QC_ALPHA: bytes.fromhex("00 07 80 00"),
     QC_CHARSETS: bytes.fromhex(
         "82 00 09 0c 00 00 00 00 07 00 10 00 02 b9 00 25 01 10 f1 03 c3 01 36"
@@ -112,8 +127,33 @@ QUERY_PROFILE_BODIES = {
     QC_REPLY_MODES: bytes.fromhex("00 01 02"),
     QC_DDM: bytes.fromhex("00 00 10 00 10 00 01 01"),
     QC_AUX_DEVICE: bytes.fromhex("00 00 00 00 00 00 00 06 a7 f3 f2 f7 f0 00"),
-    QC_IMPL_PARTS: bytes.fromhex("00 00 0b 01 00 00 50 00 18 00 50 00 18"),
 }
+
+
+def build_usable_area_body(rows: int, cols: int) -> bytes:
+    """Query Reply (Usable Area), QC_USABLE — sized for an arbitrary rows×cols
+    model. AW/AH (physical size hints, mm) scale from the original 80x24
+    baseline (AW=2mm, AH=111mm); they aren't addressing-critical."""
+    aw = max(1, round(2 * cols / 80))
+    ah = max(1, round(111 * rows / 24))
+    return struct.pack(
+        ">BBHHBHHHHBBH",
+        0x01, 0x00,       # FLAGS, reserved
+        cols, rows,       # WIDTH, HEIGHT
+        0x01,             # UNITS (mm)
+        0x000a, 0x02e5,   # Xr, Yr
+        aw, ah,           # AW, AH
+        0x09, 0x0c,       # XMINCP, YMINCP
+        rows * cols,      # BUFSZ
+    )
+
+
+def build_impl_parts_body(rows: int, cols: int) -> bytes:
+    """Query Reply (Implicit Partitions), QC_IMPL_PARTS — default and
+    alternate partition both set to the same rows×cols."""
+    return bytes([0x00, 0x00, 0x0b, 0x01, 0x00]) + struct.pack(
+        ">HHHH", cols, rows, cols, rows
+    )
 
 _SIX_BIT = bytes([
     0x40, 0xC1, 0xC2, 0xC3, 0xC4, 0xC5, 0xC6, 0xC7,

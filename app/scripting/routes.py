@@ -297,6 +297,7 @@ def dsp3270_aid(ctx, path_params, body):
 def dsp3270_setup(ctx, path_params, body):
     index = _index(path_params)
     font_size = (body or {}).get("font_size")
+    model = (body or {}).get("model")
     if font_size is None:
         raise ApiError(400, "Missing 'font_size'")
 
@@ -304,7 +305,9 @@ def dsp3270_setup(ctx, path_params, body):
         device = _get_device(ctx, index)
         _require_class(device, "DSP")
         device.set_font_size(font_size)
-        return {"font_size": device._font_size_px}
+        if model is not None:
+            device.set_model(model)
+        return {"font_size": device._font_size_px, "model": device._model}
 
     return ctx.bridge.call_on_gui_thread(_do)
 
@@ -343,13 +346,12 @@ def dsp3270_screen(ctx, path_params, body):
     index = _index(path_params)
 
     def _do():
-        from ..widgets.terminal_screen import COLS
-
         device = _get_device(ctx, index)
         _require_class(device, "DSP")
+        cols = device._cols
         mask = list(device._protected_mask)
         protected_rows = (
-            [mask[r * COLS:(r + 1) * COLS] for r in range(len(mask) // COLS)] if mask else []
+            [mask[r * cols:(r + 1) * cols] for r in range(len(mask) // cols)] if mask else []
         )
         return {
             "lines": list(device._mini_lines),
@@ -919,7 +921,8 @@ ROUTES: list[RouteSpec] = [
               "Read the current 3270 screen text, cursor position, and per-cell protected/unprotected map",
               {}),
     RouteSpec("POST", "/devices/{index}/dsp3270/setup", dsp3270_setup,
-              "Change the 3270 terminal font size", {"font_size": "int (10-32)"}),
+              "Change the 3270 terminal font size and/or monitor model",
+              {"font_size": "int (10-32)", "model": "int, optional (2/3/4/5)"}),
     RouteSpec("POST", "/devices/{index}/dsp3270/connect", dsp3270_connect,
               "Connect the 3270 terminal's socket", {}),
     RouteSpec("POST", "/devices/{index}/dsp3270/disconnect", dsp3270_disconnect,

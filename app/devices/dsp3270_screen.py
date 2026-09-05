@@ -5,7 +5,7 @@ from typing import Optional
 
 from PySide6.QtGui import QColor
 
-from ..widgets.terminal_screen import COLOR_3279, ROWS, COLS, CELLS
+from ..widgets.terminal_screen import COLOR_3279
 from .dsp3270_protocol import (
     AID_NONE,
     EAT_ALL,
@@ -141,15 +141,18 @@ _FG_GREEN = COLOR_3279[0x00]
 
 class Screen3270:
     """
-    80x24 3270 screen model.
+    3270 screen model, sized to an arbitrary rows×cols monitor model.
 
     Maintains the cell array, cursor, keyboard lock state, and current AID.
     Processes host Write commands and formats inbound Read Modified / Read
     Buffer messages.
     """
 
-    def __init__(self):
-        self.cells: list[_Cell] = [_Cell() for _ in range(CELLS)]
+    def __init__(self, rows: int = 24, cols: int = 80):
+        self.rows = rows
+        self.cols = cols
+        self.cells_count = rows * cols
+        self.cells: list[_Cell] = [_Cell() for _ in range(self.cells_count)]
         self.cursor: int = 0
         self.address: int = 0
         self.keyboard_locked: bool = True
@@ -201,12 +204,12 @@ class Screen3270:
                         sa_reverse is not None,
                         sa_underscore is not None,
                     )
-                    self.address = wrap_addr(self.address + 1)
+                    self.address = wrap_addr(self.address + 1, self.cells_count)
 
             elif order == ORD_PT:
                 here = self.cells[self.address]
                 if here.is_attr and not here.prot:
-                    self.address = wrap_addr(self.address + 1)
+                    self.address = wrap_addr(self.address + 1, self.cells_count)
                 else:
                     addr = self._next_unprotected(self.address, forward=True)
                     if addr is None or addr < self.address:
@@ -215,7 +218,7 @@ class Screen3270:
                         not pt_order_previous_command
                         or (previous_order == ORD_PT and pt_order_previous_null_insert)
                     ):
-                        end = wrap_addr(addr - 1)
+                        end = wrap_addr(addr - 1, self.cells_count)
                         for a in self._range(self.address, end):
                             if self.cells[a].is_attr:
                                 break
@@ -247,14 +250,14 @@ class Screen3270:
                     sa_reverse is not None,
                     sa_underscore is not None,
                 )
-                self.address = wrap_addr(self.address + 1)
+                self.address = wrap_addr(self.address + 1, self.cells_count)
 
             elif order == ORD_SBA:
-                self.address = params[0]
+                self.address = wrap_addr(params[0], self.cells_count)
 
             elif order == ORD_EUA:
-                stop = params[0]
-                end = wrap_addr(stop - 1)
+                stop = wrap_addr(params[0], self.cells_count)
+                end = wrap_addr(stop - 1, self.cells_count)
                 for a in self._range(self.address, end):
                     if not self.cells[a].is_attr and not self._is_protected(a):
                         self.cells[a].byte = 0x00
@@ -273,7 +276,7 @@ class Screen3270:
                 c.hl_underscore = False
                 fe_color = fe_blink = 0x00
                 fe_reverse = fe_underscore = False
-                self.address = wrap_addr(self.address + 1)
+                self.address = wrap_addr(self.address + 1, self.cells_count)
 
             elif order == ORD_SFE:
                 attr_byte, ext_list = params
@@ -289,7 +292,7 @@ class Screen3270:
                 c.hl_blink = fe_blink
                 c.hl_reverse = fe_reverse
                 c.hl_underscore = fe_underscore
-                self.address = wrap_addr(self.address + 1)
+                self.address = wrap_addr(self.address + 1, self.cells_count)
 
             elif order == ORD_MF:
                 attr_byte, ext_list = params
@@ -302,7 +305,7 @@ class Screen3270:
                             etype, evalue, c.ext_color, c.hl_blink, c.hl_reverse, c.hl_underscore
                         )
                         c.ext_color, c.hl_blink, c.hl_reverse, c.hl_underscore = fc, fb, fr, fu
-                self.address = wrap_addr(self.address + 1)
+                self.address = wrap_addr(self.address + 1, self.cells_count)
 
             elif order == ORD_SA:
                 etype, evalue = params
@@ -321,7 +324,8 @@ class Screen3270:
 
             elif order == ORD_RA:
                 stop, byte, is_ge = params
-                end = wrap_addr(stop - 1)
+                stop = wrap_addr(stop, self.cells_count)
+                end = wrap_addr(stop - 1, self.cells_count)
                 for a in self._range(self.address, end):
                     self._write_char(
                         a,
@@ -523,7 +527,7 @@ class Screen3270:
             addr = self._next_unprotected(self.cursor, True)
         else:
             start = self._field_start(self.cursor)
-            anchor = wrap_addr(start - 1) if start is not None else self.cursor
+            anchor = wrap_addr(start - 1, self.cells_count) if start is not None else self.cursor
             addr = self._next_unprotected(anchor, False)
         if addr is not None:
             self.cursor = addr
@@ -533,10 +537,10 @@ class Screen3270:
         self.cursor = addr if addr is not None else 0
 
     def cursor_move(self, dr: int, dc: int) -> None:
-        row, col = divmod(self.cursor, COLS)
-        row = (row + dr) % ROWS
-        col = (col + dc) % COLS
-        self.cursor = row * COLS + col
+        row, col = divmod(self.cursor, self.cols)
+        row = (row + dr) % self.rows
+        col = (col + dc) % self.cols
+        self.cursor = row * self.cols + col
 
     def input(self, byte: int, insert: bool = False) -> None:
         if self.keyboard_locked:
@@ -558,7 +562,7 @@ class Screen3270:
             preserve_previous_explicit=True,
         )
         self._mark_modified(self.cursor)
-        nxt = wrap_addr(self.cursor + 1)
+        nxt = wrap_addr(self.cursor + 1, self.cells_count)
         if self.cells[nxt].is_attr:
             ahead = self._next_unprotected(nxt, forward=True)
             if ahead is not None:
@@ -571,7 +575,7 @@ class Screen3270:
         start = self._field_start(self.cursor)
         if start is None or self.cursor == start:
             return
-        prev = wrap_addr(self.cursor - 1)
+        prev = wrap_addr(self.cursor - 1, self.cells_count)
         end = self._field_end(self.cursor)
         if end is not None:
             self._shift_left(prev, end)
@@ -591,7 +595,7 @@ class Screen3270:
             return
         end = self._field_end(self.cursor)
         if end is None:
-            end = CELLS - 1
+            end = self.cells_count - 1
         for a in self._range(self.cursor, end):
             if self.cells[a].is_attr:
                 break
@@ -617,15 +621,15 @@ class Screen3270:
         return attr is not None and attr.prot
 
     def _find_attr(self, addr: int) -> Optional[_Cell]:
-        for offset in range(CELLS):
-            idx = wrap_addr(addr - offset - 1)
+        for offset in range(self.cells_count):
+            idx = wrap_addr(addr - offset - 1, self.cells_count)
             if self.cells[idx].is_attr:
                 return self.cells[idx]
         return None
 
     def _find_attr_addr(self, addr: int) -> Optional[int]:
-        for offset in range(CELLS):
-            idx = wrap_addr(addr - offset - 1)
+        for offset in range(self.cells_count):
+            idx = wrap_addr(addr - offset - 1, self.cells_count)
             if self.cells[idx].is_attr:
                 return idx
         return None
@@ -634,22 +638,22 @@ class Screen3270:
         attr_addr = self._find_attr_addr(addr)
         if attr_addr is None:
             return None
-        return wrap_addr(attr_addr + 1)
+        return wrap_addr(attr_addr + 1, self.cells_count)
 
     def _field_end(self, addr: int) -> Optional[int]:
-        for offset in range(1, CELLS):
-            idx = wrap_addr(addr + offset)
+        for offset in range(1, self.cells_count):
+            idx = wrap_addr(addr + offset, self.cells_count)
             if self.cells[idx].is_attr:
-                return wrap_addr(idx - 1)
+                return wrap_addr(idx - 1, self.cells_count)
         return None
 
     def _next_unprotected(self, from_addr: int, forward: bool = True) -> Optional[int]:
         step = 1 if forward else -1
-        for offset in range(1, CELLS + 1):
-            idx = wrap_addr(from_addr + step * offset)
+        for offset in range(1, self.cells_count + 1):
+            idx = wrap_addr(from_addr + step * offset, self.cells_count)
             c = self.cells[idx]
             if c.is_attr and not c.prot and not c.skip:
-                return wrap_addr(idx + 1)
+                return wrap_addr(idx + 1, self.cells_count)
         return None
 
     def _mark_modified(self, addr: int) -> None:
@@ -669,12 +673,11 @@ class Screen3270:
             self.cells[r].copy_char_state_from(self.cells[l])
         self.cells[start].reset_char()
 
-    @staticmethod
-    def _range(start: int, end: int):
+    def _range(self, start: int, end: int):
         if end >= start:
             return range(start, end + 1)
         import itertools
-        return itertools.chain(range(start, CELLS), range(0, end + 1))
+        return itertools.chain(range(start, self.cells_count), range(0, end + 1))
 
     def format_aid_message(self, aid: int, read_all: bool = False) -> bytes:
         if aid in SHORT_READ_AIDS and not read_all:
@@ -691,13 +694,13 @@ class Screen3270:
             out.extend(raw)
             return bytes(out)
 
-        for i in range(CELLS):
+        for i in range(self.cells_count):
             c = self.cells[i]
             if c.is_attr and c.modified:
-                field_start = wrap_addr(i + 1)
+                field_start = wrap_addr(i + 1, self.cells_count)
                 field_bytes = bytearray()
-                for offset in range(1, CELLS):
-                    a = wrap_addr(field_start + offset - 1)
+                for offset in range(1, self.cells_count):
+                    a = wrap_addr(field_start + offset - 1, self.cells_count)
                     cell = self.cells[a]
                     if cell.is_attr:
                         break
@@ -712,7 +715,7 @@ class Screen3270:
     def build_snapshot(self) -> list:
         snap = []
         current_attr: Optional[_Cell] = self._find_attr(0)
-        for i in range(CELLS):
+        for i in range(self.cells_count):
             c = self.cells[i]
             if c.is_attr:
                 current_attr = c
@@ -757,7 +760,7 @@ class Screen3270:
         of guessing keystroke/Tab counts."""
         mask = []
         current_attr: Optional[_Cell] = self._find_attr(0)
-        for i in range(CELLS):
+        for i in range(self.cells_count):
             c = self.cells[i]
             if c.is_attr:
                 current_attr = c
@@ -768,17 +771,17 @@ class Screen3270:
 
     def build_text_lines(self, locked: bool = True, insert: bool = False, cursor: int = 0) -> list[str]:
         lines = []
-        for row in range(ROWS):
-            base = row * COLS
-            line = ''.join(_cell_to_char(self.cells[base + col]) for col in range(COLS))
+        for row in range(self.rows):
+            base = row * self.cols
+            line = ''.join(_cell_to_char(self.cells[base + col]) for col in range(self.cols))
             lines.append(line.rstrip())
-        # Row 25 — OIA status line
+        # OIA status line (one row past the data grid)
         parts = []
         if locked:
             parts.append("X SYSTEM")
         if insert:
             parts.append("INSERT")
-        r, c = divmod(cursor, COLS)
-        status = ("  ".join(parts)).ljust(COLS - 5) + f"{r+1:02d}/{c+1:02d}"
+        r, c = divmod(cursor, self.cols)
+        status = ("  ".join(parts)).ljust(self.cols - 5) + f"{r+1:02d}/{c+1:02d}"
         lines.append(status)
         return lines
