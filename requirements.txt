@@ -2,11 +2,11 @@
 # Install with: pip install -r requirements.txt
 
 # Qt GUI framework (widgets, signals, painting)
-PySide6==6.11.0
+PySide6>=6.5.0
 
 # HTTP client — REST API calls to Hercules
-requests==2.32.5
+requests>=2.25.0
 
 # PDF generation — printer (1403) workspace PDF export
-fpdf2==2.8.7
+fpdf2>=2.7.6
 Pillow
