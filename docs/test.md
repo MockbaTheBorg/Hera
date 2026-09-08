@@ -7,7 +7,7 @@ Hercules instance and a small z/OS 2.2 dataset. It assumes a Linux host with
 Prerequisites
 
 - Git
-- Python 3.8+ and `venv`
+- Python 3.10+ and `venv`
 - Build tools for Hercules (see https://github.com/wrljet/hercules-helper)
 - `ckd2cckd64` utility
 

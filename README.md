@@ -20,7 +20,7 @@ Hera is a modern graphical front end for the SDL Hercules (Hyperion) IBM mainfra
 
 ## Requirements
 
-- Python 3.8 or newer
+- Python 3.10 or newer
 - A running SDL Hyperion Hercules instance with its REST API enabled (port 8081 by default)
 
 ---
