@@ -8,6 +8,7 @@ Room: cpu.png bitmap with blinkenlights overlay (register bits as 2x2px dots).
 Workspace: PSW, GR0-15, CR0-15, AR0-15, MIPS/SIOS rates.
 Button column: Three IPL hex dials + IPL button + Start/Stop buttons.
 """
+import struct
 from typing import Optional
 
 from PySide6.QtWidgets import QWidget
@@ -91,19 +92,32 @@ class CpuDevice(DeviceBase):
         self._cpu_running = False
         self._cpu_wait = False
         self._cpu_active = False   # True only when MIPS > 0
-        # Blinkenlights mode: "GR", "CR", or "AR"
-        self._blink_mode = "GR"
+        # Blinkenlights mode: "GPR", "CR", "AR", or "FPR"
+        self._blink_mode = "GPR"
 
     def _selected_registers(self, cpu0: dict) -> dict:
         if self._blink_mode == "CR":
             return cpu0.get("control_registers", {})
         if self._blink_mode == "AR":
             return cpu0.get("access_registers", {})
+        if self._blink_mode == "FPR":
+            return cpu0.get("floating_point_registers", {})
         return cpu0.get("general_registers", {})
 
     @staticmethod
     def _register_rows(registers: dict, prefix: str) -> list[int]:
-        return [int(registers.get(f"{prefix}{i}", "0"), 16) for i in range(16)]
+        rows = []
+        for i in range(16):
+            value = registers.get(f"{prefix}{i}", "0")
+            if prefix == "FPR":
+                try:
+                    value = int(value, 16)
+                except (TypeError, ValueError):
+                    value = struct.unpack(">Q", struct.pack(">d", float(value)))[0]
+            else:
+                value = int(value, 16)
+            rows.append(value)
+        return rows
 
     @staticmethod
     def _wait_bit(psw: str) -> bool:
@@ -234,7 +248,7 @@ class CpuDevice(DeviceBase):
 
         # Update blinkenlight data — full 64-bit values, 8 rows per column
         psw_str = cpu0.get("PSW", "0" * 32)
-        prefix = self._blink_mode if self._blink_mode != "GR" else "GR"
+        prefix = "GR" if self._blink_mode == "GPR" else self._blink_mode
         self._blink_data = self._register_rows(self._selected_registers(cpu0), prefix)
 
         # PSW blink data: high 64 bits → left, low 64 bits → right

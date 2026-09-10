@@ -133,12 +133,12 @@ class IplPanel(QWidget):
         mode_row.setSpacing(2)
         self._mode_group = QButtonGroup(self)
         self._mode_group.setExclusive(True)
-        for label in ("GR", "CR", "AR"):
+        for label in ("GPR", "CR", "AR", "FPR"):
             btn = QPushButton(label)
             btn.setCheckable(True)
             btn.setFixedHeight(BUTTON_HEIGHT)
             btn.setStyleSheet(btn_style)
-            if label == "GR":
+            if label == "GPR":
                 btn.setChecked(True)
             self._mode_group.addButton(btn)
             mode_row.addWidget(btn)
@@ -225,7 +225,7 @@ class IplPanel(QWidget):
 
 
 class CpuWorkspace(QWidget):
-    """Displays PSW, GR/CR/AR registers and MIPS/SIOS rates."""
+    """Displays PSW, GPR/FPR/CR/AR registers and MIPS/SIOS rates."""
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -301,6 +301,22 @@ class CpuWorkspace(QWidget):
 
         sep4 = QFrame(); sep4.setFrameShape(QFrame.HLine); layout.addWidget(sep4)
 
+        layout.addWidget(self._section_label("Floating Point Registers"))
+        self._fpr_grid = QGridLayout()
+        self._fpr_labels = {}
+        for i in range(16):
+            lbl = QLabel(f"FPR{i:2d}:")
+            lbl.setStyleSheet(lbl_style)
+            val = QLabel("0000000000000000")
+            val.setStyleSheet(mono_style)
+            self._fpr_labels[f"FPR{i}"] = val
+            self._fpr_grid.addWidget(lbl, i // 4, (i % 4) * 2)
+            self._fpr_grid.addWidget(val, i // 4, (i % 4) * 2 + 1)
+        self._fpr_grid.setColumnStretch(8, 1)
+        layout.addLayout(self._fpr_grid)
+
+        sep_fpr = QFrame(); sep_fpr.setFrameShape(QFrame.HLine); layout.addWidget(sep_fpr)
+
         rates_row = QHBoxLayout()
         self._mips = QLabel("MIPS: 0.00 /")
         self._sios = QLabel("SIOS: 0")
@@ -325,6 +341,10 @@ class CpuWorkspace(QWidget):
         gr = cpu_data.get("general_registers", {})
         for key, lbl in self._gr_labels.items():
             lbl.setText(gr.get(key, "0000000000000000"))
+
+        fpr = cpu_data.get("floating_point_registers", {})
+        for key, lbl in self._fpr_labels.items():
+            lbl.setText(str(fpr.get(key, "0000000000000000")))
 
         cr = cpu_data.get("control_registers", {})
         for key, lbl in self._cr_labels.items():
