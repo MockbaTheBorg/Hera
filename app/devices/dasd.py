@@ -94,6 +94,9 @@ class DasdDevice(DeviceBase):
 
     device_classes: list[str] = ["DASD"]
     bitmap_name: str = "2311.png"
+    # Matches the lamp strip baked into 2311.png (x already lines up at 21).
+    # Lights are drawn after the disc overlay (room_widget.py) so this stays
+    # visible even when a volume is mounted.
     room_light_origin = (21, 74)
 
     def __init__(self, context: Optional[DeviceContext] = None):

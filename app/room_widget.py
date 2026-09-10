@@ -129,10 +129,12 @@ class DeviceSlot(QWidget):
             dest_rect = QRect(x, y, bm_w, bm_h)
             painter.drawPixmap(dest_rect, self._pixmap)
 
-            self.device.draw_room_lights(painter, dest_rect)
-
             # --- Device overlay (blinkenlights, mini screens) ---
             self.device.draw_room_overlay(painter, dest_rect)
+
+            # Lights drawn last so they stay visible over any overlay
+            # (real status lamps sit on the panel regardless of loaded media).
+            self.device.draw_room_lights(painter, dest_rect)
 
         # Highlight border for selected device
         if self.selected:
