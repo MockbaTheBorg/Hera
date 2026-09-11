@@ -34,8 +34,8 @@ BLINK_DOT_SIZE     = 2    # 2x2px per dot
 BLINK_DOT_SPACING  = 3    # 3px pitch (2px dot + 1px gap)
 BLINK_ROW_Y_BASE   = 67   # y of row 0 top edge
 BLINK_ROW_SPACING  = 8    # y distance between row starts
-BLINK_COL1_NIBBLE_X = 36  # x of nibble 0 in left  column
-BLINK_COL2_NIBBLE_X = 94  # x of nibble 0 in right column
+BLINK_COL1_NIBBLE_X = 42  # x of nibble 0 in left  column
+BLINK_COL2_NIBBLE_X = 100 # x of nibble 0 in right column
 
 PSW_ROW_Y   = 141   # y of PSW row: high half in col1, low half in col2
 PSW_COL1_X  = 36    # x of nibble 0, left column
