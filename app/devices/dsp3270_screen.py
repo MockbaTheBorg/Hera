@@ -157,12 +157,25 @@ class Screen3270:
         self.address: int = 0
         self.keyboard_locked: bool = True
         self.current_aid: int = AID_NONE
+        # Character-level Set Attribute (SA) state. Per the 3270 data stream
+        # architecture this persists across separate Write commands (a host
+        # need not re-bracket every partial update) until changed by another
+        # SA/SFE/MF order or the buffer is erased. None means "no override in
+        # effect for this attribute type" (falls back to the field default).
+        self.sa_color: Optional[int] = None
+        self.sa_blink: Optional[bool] = None
+        self.sa_reverse: Optional[bool] = None
+        self.sa_underscore: Optional[bool] = None
 
     def erase(self) -> None:
         for c in self.cells:
             c.reset_char()
         self.address = 0
         self.cursor = 0
+        self.sa_color = None
+        self.sa_blink = None
+        self.sa_reverse = None
+        self.sa_underscore = None
 
     def write(self, wcc: int, data: bytes) -> None:
         self.address = self.cursor
@@ -173,11 +186,6 @@ class Screen3270:
                     c.modified = False
         if wcc & 0x02:
             self.keyboard_locked = False
-
-        sa_color = None
-        sa_blink = None
-        sa_reverse = None
-        sa_underscore = None
 
         fe_color = 0x00
         fe_blink = False
@@ -194,15 +202,15 @@ class Screen3270:
                     self._write_char(
                         self.address,
                         byte,
-                        sa_color if sa_color is not None else fe_color,
-                        sa_blink if sa_blink is not None else fe_blink,
-                        sa_reverse if sa_reverse is not None else fe_reverse,
-                        sa_underscore if sa_underscore is not None else fe_underscore,
+                        self.sa_color if self.sa_color is not None else fe_color,
+                        self.sa_blink if self.sa_blink is not None else fe_blink,
+                        self.sa_reverse if self.sa_reverse is not None else fe_reverse,
+                        self.sa_underscore if self.sa_underscore is not None else fe_underscore,
                         False,
-                        sa_color is not None,
-                        sa_blink is not None,
-                        sa_reverse is not None,
-                        sa_underscore is not None,
+                        self.sa_color is not None,
+                        self.sa_blink is not None,
+                        self.sa_reverse is not None,
+                        self.sa_underscore is not None,
                     )
                     self.address = wrap_addr(self.address + 1, self.cells_count)
 
@@ -225,10 +233,10 @@ class Screen3270:
                             self._write_char(
                                 a,
                                 0x00,
-                                sa_color if sa_color is not None else fe_color,
-                                sa_blink if sa_blink is not None else fe_blink,
-                                sa_reverse if sa_reverse is not None else fe_reverse,
-                                sa_underscore if sa_underscore is not None else fe_underscore,
+                                self.sa_color if self.sa_color is not None else fe_color,
+                                self.sa_blink if self.sa_blink is not None else fe_blink,
+                                self.sa_reverse if self.sa_reverse is not None else fe_reverse,
+                                self.sa_underscore if self.sa_underscore is not None else fe_underscore,
                                 False,
                             )
                         pt_order_previous_null_insert = addr == 0
@@ -240,15 +248,15 @@ class Screen3270:
                 self._write_char(
                     self.address,
                     params[0],
-                    sa_color if sa_color is not None else fe_color,
-                    sa_blink if sa_blink is not None else fe_blink,
-                    sa_reverse if sa_reverse is not None else fe_reverse,
-                    sa_underscore if sa_underscore is not None else fe_underscore,
+                    self.sa_color if self.sa_color is not None else fe_color,
+                    self.sa_blink if self.sa_blink is not None else fe_blink,
+                    self.sa_reverse if self.sa_reverse is not None else fe_reverse,
+                    self.sa_underscore if self.sa_underscore is not None else fe_underscore,
                     True,
-                    sa_color is not None,
-                    sa_blink is not None,
-                    sa_reverse is not None,
-                    sa_underscore is not None,
+                    self.sa_color is not None,
+                    self.sa_blink is not None,
+                    self.sa_reverse is not None,
+                    self.sa_underscore is not None,
                 )
                 self.address = wrap_addr(self.address + 1, self.cells_count)
 
@@ -312,15 +320,15 @@ class Screen3270:
                 sc, sb, sr, su = self._apply_sa_ext(
                     etype,
                     evalue,
-                    sa_color,
-                    sa_blink,
-                    sa_reverse,
-                    sa_underscore,
+                    self.sa_color,
+                    self.sa_blink,
+                    self.sa_reverse,
+                    self.sa_underscore,
                 )
-                sa_color = sc
-                sa_blink = sb
-                sa_reverse = sr
-                sa_underscore = su
+                self.sa_color = sc
+                self.sa_blink = sb
+                self.sa_reverse = sr
+                self.sa_underscore = su
 
             elif order == ORD_RA:
                 stop, byte, is_ge = params
@@ -330,15 +338,15 @@ class Screen3270:
                     self._write_char(
                         a,
                         byte,
-                        sa_color if sa_color is not None else fe_color,
-                        sa_blink if sa_blink is not None else fe_blink,
-                        sa_reverse if sa_reverse is not None else fe_reverse,
-                        sa_underscore if sa_underscore is not None else fe_underscore,
+                        self.sa_color if self.sa_color is not None else fe_color,
+                        self.sa_blink if self.sa_blink is not None else fe_blink,
+                        self.sa_reverse if self.sa_reverse is not None else fe_reverse,
+                        self.sa_underscore if self.sa_underscore is not None else fe_underscore,
                         is_ge,
-                        sa_color is not None,
-                        sa_blink is not None,
-                        sa_reverse is not None,
-                        sa_underscore is not None,
+                        self.sa_color is not None,
+                        self.sa_blink is not None,
+                        self.sa_reverse is not None,
+                        self.sa_underscore is not None,
                     )
                 self.address = stop
 
@@ -417,7 +425,7 @@ class Screen3270:
         if etype == EAT_COLOR:
             return evalue, blink, reverse, underscore
         if etype == EAT_HIGHLIGHT:
-            if evalue == HL_NORMAL:
+            if evalue in (0x00, HL_NORMAL):
                 return color, False, False, False
             if evalue == HL_BLINK:
                 return color, True, False, False
@@ -441,7 +449,7 @@ class Screen3270:
         if etype == EAT_COLOR:
             return (None if evalue == 0x00 else evalue), blink, reverse, underscore
         if etype == EAT_HIGHLIGHT:
-            if evalue == HL_NORMAL:
+            if evalue in (0x00, HL_NORMAL):
                 return color, None, None, None
             if evalue == HL_BLINK:
                 return color, True, False, False
