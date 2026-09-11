@@ -45,18 +45,27 @@ MIN_HEIGHT = 840
 
 
 class ShutdownProgressDialog:
-    """Small modal progress dialog for printer PDF saves during shutdown."""
+    """Small modal progress dialog covering the whole shutdown sequence
+    (polling stop, printer PDF saves, device cleanup) so the user always
+    sees why Hera hasn't exited yet, instead of a silent pause."""
 
     def __init__(self, parent: QWidget | None):
         self._dialog = QProgressDialog(parent)
-        self._dialog.setWindowTitle("Saving Printer PDFs")
+        self._dialog.setWindowTitle("Closing Hera")
         self._dialog.setCancelButton(None)
         self._dialog.setMinimumDuration(0)
         self._dialog.setAutoClose(False)
         self._dialog.setAutoReset(False)
         self._dialog.setWindowModality(Qt.WindowModality.ApplicationModal)
         self._dialog.setRange(0, 0)
-        self._dialog.hide()
+        self._dialog.setLabelText("Wait for Hera to finish closing...")
+        self._dialog.show()
+        QApplication.processEvents()
+
+    def status(self, label: str) -> None:
+        self._dialog.setRange(0, 0)
+        self._dialog.setLabelText(label)
+        QApplication.processEvents()
 
     def update(self, label: str, current: int, total: int) -> None:
         total = max(1, int(total))
@@ -64,8 +73,6 @@ class ShutdownProgressDialog:
         self._dialog.setLabelText(f"{label}\nPage {current} of {total}")
         self._dialog.setRange(0, total)
         self._dialog.setValue(current)
-        if not self._dialog.isVisible():
-            self._dialog.show()
         QApplication.processEvents()
 
     def close(self) -> None:
@@ -491,18 +498,19 @@ class MainWindow(QMainWindow):
 
     def closeEvent(self, event):
         self._shutting_down = True
+        shutdown_progress = ShutdownProgressDialog(self)
         self._timer.stop()
         self._poller.set_devices([])
         self._poll_thread.quit()
         if not self._poll_thread.wait(5000):
             logger.warning("Polling thread did not stop cleanly before shutdown")
-        shutdown_progress = ShutdownProgressDialog(self)
         self._run_device_hook(
             "on_app_closing",
             log_message="Device shutdown save failed: %s",
             shutdown_progress=shutdown_progress.update,
         )
-        shutdown_progress.close()
+        shutdown_progress.status("Closing device connections...")
         self._run_device_hook("cleanup", log_message="Device cleanup failed during shutdown: %s")
+        shutdown_progress.close()
         self._save_geometry()
         super().closeEvent(event)

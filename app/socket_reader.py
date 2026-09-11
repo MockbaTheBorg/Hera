@@ -8,7 +8,6 @@ Shared line-based socket reader for Hercules sockdev consumers.
 import logging
 import socket
 import threading
-import time
 from typing import Optional
 
 from PySide6.QtCore import QObject, Signal
@@ -45,6 +44,7 @@ class SocketLineReader(QObject):
         self._running = False
         self._connect_enabled = False
         self._state_lock = threading.Lock()
+        self._wake_event = threading.Event()
         self._disconnect_generation = 0
         self._thread: Optional[threading.Thread] = None
         self._sock: Optional[socket.socket] = None
@@ -83,6 +83,7 @@ class SocketLineReader(QObject):
         sock = self._detach_socket(disable_connect=True, stop_running=True)
         self._set_connected(False)
         self._close_socket(sock)
+        self._wake_event.set()
         if thread is not None and thread is not threading.current_thread():
             thread.join(timeout=self._join_timeout())
             if thread.is_alive():
@@ -151,7 +152,8 @@ class SocketLineReader(QObject):
                     break
                 if not connect_enabled:
                     self._set_connected(False)
-                    time.sleep(0.1)
+                    self._wake_event.wait(0.1)
+                    self._wake_event.clear()
                     continue
                 sock: Optional[socket.socket] = None
                 try:
@@ -191,7 +193,8 @@ class SocketLineReader(QObject):
                     self._set_connected(False)
                 running, connect_enabled, _ = self._thread_should_run()
                 if running and connect_enabled:
-                    time.sleep(self._reconnect_delay)
+                    self._wake_event.wait(self._reconnect_delay)
+                    self._wake_event.clear()
         finally:
             with self._state_lock:
                 if self._thread is threading.current_thread():
