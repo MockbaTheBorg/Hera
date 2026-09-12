@@ -143,18 +143,20 @@ class MainWindow(QMainWindow):
     _start_poll = Signal()
 
     def __init__(self, config: Config, api: HerculesAPI, devices: list[DeviceBase],
-                 device_builder=None):
+                 device_builder=None, device_refresher=None):
         super().__init__()
         self._config = config
         self._api = api
         self._base_devices = list(devices)
         self._devices = self._sort_devices_by_config(self._base_devices)
         self._device_builder = device_builder  # callable() -> list[DeviceBase]
+        self._device_refresher = device_refresher  # callable(list[DeviceBase]) -> list[DeviceBase] | None
         self._active_device: Optional[DeviceBase] = None
         self._connected = False
         self._poll_in_flight = False
         self._shutting_down = False
         self._pending_rebuild = False
+        self._pending_device_refresh = False
 
         self._setup_window()
         self._setup_menu()
@@ -209,6 +211,11 @@ class MainWindow(QMainWindow):
         preferences_action.setShortcut("Ctrl+,")
         preferences_action.triggered.connect(self._show_preferences)
         file_menu.addAction(preferences_action)
+
+        refresh_action = QAction("&Refresh devices", self)
+        refresh_action.setShortcut("Ctrl+R")
+        refresh_action.triggered.connect(self._refresh_devices)
+        file_menu.addAction(refresh_action)
         file_menu.addSeparator()
 
         quit_action = QAction("&Quit", self)
@@ -310,6 +317,9 @@ class MainWindow(QMainWindow):
         if self._pending_rebuild and self._connected and not self._shutting_down:
             self._pending_rebuild = False
             self._rebuild_devices()
+        elif self._pending_device_refresh and self._connected and not self._shutting_down:
+            self._pending_device_refresh = False
+            self._apply_device_refresh()
 
     def _restore_geometry(self):
         if self._config.window_x >= 0 and self._config.window_y >= 0:
@@ -403,6 +413,60 @@ class MainWindow(QMainWindow):
         self._base_devices = self._device_builder()
         self._devices = self._sort_devices_by_config(self._base_devices)
         self._poller.set_devices(self._devices)
+        self._room.set_devices(self._devices)
+
+    def _refresh_devices(self) -> None:
+        """File > Refresh devices: reconcile the room with Hercules' current
+        device set without disturbing devices that didn't change (e.g. their
+        live DSP3270 sessions stay connected)."""
+        if self._device_refresher is None:
+            return
+        if not self._connected:
+            self._status_bar.showMessage("Refresh devices: not connected to Hercules", 4000)
+            return
+        if self._poll_in_flight:
+            self._pending_device_refresh = True
+            return
+        self._apply_device_refresh()
+
+    def _apply_device_refresh(self) -> None:
+        if self._device_refresher is None:
+            return
+
+        previous_devnums = {dev.devnum for dev in self._base_devices if dev.devnum}
+        new_devices = self._device_refresher(self._base_devices)
+        if new_devices is None:
+            self._status_bar.showMessage("Refresh devices: Hercules unreachable", 4000)
+            return
+
+        new_devnums = {dev.devnum for dev in new_devices if dev.devnum}
+        added = len(new_devnums - previous_devnums)
+        removed = len(previous_devnums - new_devnums)
+        if added or removed:
+            self._status_bar.showMessage(f"Refresh devices: {added} added, {removed} removed", 4000)
+        else:
+            self._status_bar.showMessage("Refresh devices: no changes", 4000)
+
+        previous_active = self._active_device
+        self._base_devices = new_devices
+        self._devices = self._sort_devices_by_config(self._base_devices)
+        self._poller.set_devices(self._devices)
+
+        if previous_active is not None and previous_active in self._devices:
+            # Unchanged and still selected — keep it in front, no reselection dance.
+            self._room.set_devices(self._devices, selected_device=previous_active, emit_selection=False)
+            return
+
+        # The selected device was replaced or removed by the refresh; its
+        # cleanup() already ran inside the refresher. Fall back to the first
+        # slot, same as a full rebuild does.
+        if previous_active is not None:
+            try:
+                previous_active.on_deselected()
+            except Exception as exc:
+                logger.warning("Active device deselect failed during refresh: %s", exc)
+        self._active_device = None
+        self._device_area.show_placeholder()
         self._room.set_devices(self._devices)
 
     def _update_status_connected(self):

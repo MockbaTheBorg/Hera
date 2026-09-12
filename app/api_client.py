@@ -9,10 +9,13 @@ All methods return parsed JSON dicts/lists or None on error.
 """
 
 import json
+import logging
 import requests
 from typing import Optional
 
 from .syslog_feed import SyslogFeed
+
+logger = logging.getLogger(__name__)
 
 
 class HerculesAPI:
@@ -30,7 +33,8 @@ class HerculesAPI:
             resp = requests.get(url, params=params, timeout=self.timeout)
             resp.raise_for_status()
             return resp.json()
-        except Exception:
+        except Exception as e:
+            logger.debug("GET %s failed: %s", endpoint, e)
             return None
 
     @staticmethod

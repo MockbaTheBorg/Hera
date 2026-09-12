@@ -14,6 +14,7 @@ import logging
 import os
 import re
 import sys
+import time
 
 from PySide6.QtWidgets import QApplication, QProxyStyle, QStyle
 from PySide6.QtGui import QColor
@@ -90,6 +91,24 @@ def _device_label(devclass: str, devtype: str, devnum: str, devport: int) -> str
     return f"{devclass} {devtype} at {devnum}" if devnum else devclass
 
 
+def _get_devices_with_retry(api: HerculesAPI, attempts: int = 2, delay: float = 0.3):
+    """GET /devices, retrying briefly on transient failure.
+
+    Hercules' REST handler can be momentarily busy right around an
+    attach/detach, causing a single GET to fail even though Hercules is
+    genuinely reachable. Callers that discover devices (startup, reconnect,
+    manual refresh) all funnel through here so a one-off hiccup doesn't get
+    silently treated as "no devices" or "Hercules is unreachable".
+    """
+    result = api.get_devices()
+    for _ in range(attempts):
+        if result is not None:
+            break
+        time.sleep(delay)
+        result = api.get_devices()
+    return result
+
+
 def _mute_wayland_qpa_logs() -> None:
     """Silence noisy Wayland QPA logs before QApplication startup."""
     rules = [
@@ -119,7 +138,7 @@ def build_device_list(api: HerculesAPI, registry: DeviceRegistry, config=None):
     devices.append(registry.create_cpu_device(api_client=api, config=config))
 
     # Auto-discover address-based devices from the API
-    result = api.get_devices() or {}
+    result = _get_devices_with_retry(api) or {}
     for dev in result.get("devices", []):
         devclass = dev.get("devclass", "")
         devnum = dev.get("devnum", "")
@@ -138,6 +157,77 @@ def build_device_list(api: HerculesAPI, registry: DeviceRegistry, config=None):
         )
 
     return devices
+
+
+def refresh_device_list(existing_devices, api: HerculesAPI, registry: DeviceRegistry, config=None):
+    """
+    Reconcile `existing_devices` against Hercules' current device set.
+
+    Devices whose devnum/devclass/devtype/devport are unchanged are kept as
+    the same instance (their live sockets, workspaces, and session state are
+    left alone). Devices no longer reported by Hercules are cleaned up and
+    dropped; new devnums are instantiated; a devnum that now reports a
+    different devclass/devtype/devport is treated as removed+added.
+
+    Console and CPU (non-addressed, devnum == "") are always kept as-is.
+
+    Returns None if Hercules is unreachable (caller should abort the
+    refresh and leave the current device list untouched).
+    """
+    result = _get_devices_with_retry(api)
+    if result is None:
+        return None
+
+    non_addressed = [dev for dev in existing_devices if not dev.devnum]
+    existing_by_devnum = {dev.devnum: dev for dev in existing_devices if dev.devnum}
+
+    seen_devnums: set[str] = set()
+    addressed = []
+    for dev in result.get("devices", []):
+        devnum = dev.get("devnum", "")
+        if not devnum:
+            continue
+        seen_devnums.add(devnum)
+        devclass = dev.get("devclass", "")
+        devtype = dev.get("devtype", "")
+        devport = _extract_devport(dev.get("assignment", ""))
+
+        current = existing_by_devnum.get(devnum)
+        if (
+            current is not None
+            and current.devclass == devclass
+            and current.devtype == devtype
+            and current.devport == devport
+        ):
+            addressed.append(current)
+            continue
+
+        if current is not None:
+            try:
+                current.cleanup()
+            except Exception as e:
+                logger.warning("Device cleanup failed during refresh [%s]: %s", devnum, e)
+
+        addressed.append(
+            registry.create_device(
+                devclass=devclass,
+                devnum=devnum,
+                devtype=devtype,
+                label=_device_label(devclass, devtype, devnum, devport),
+                api_client=api,
+                devport=devport,
+                config=config,
+            )
+        )
+
+    for devnum, device in existing_by_devnum.items():
+        if devnum not in seen_devnums:
+            try:
+                device.cleanup()
+            except Exception as e:
+                logger.warning("Device cleanup failed during refresh [%s]: %s", devnum, e)
+
+    return non_addressed + addressed
 
 
 def main():
@@ -174,6 +264,7 @@ def main():
         api=api,
         devices=[],
         device_builder=lambda: build_device_list(api, registry, config),
+        device_refresher=lambda existing: refresh_device_list(existing, api, registry, config),
     )
     window.show()
 
