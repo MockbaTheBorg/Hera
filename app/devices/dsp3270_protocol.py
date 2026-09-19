@@ -87,8 +87,23 @@ SHORT_READ_AIDS = frozenset({AID_CLEAR, AID_PA1, AID_PA2, AID_PA3})
 
 SF_READ_PARTITION = 0x01
 SF_ERASE_RESET = 0x03
+SF_SET_REPLY_MODE = 0x09
 SF_OUTBOUND_DS = 0x40
 SF_QUERY_REPLY = 0x81
+
+# Reply Modes (Set Reply Mode SF / QC_REPLY_MODES query reply)
+REPLY_MODE_FIELD = 0x00
+REPLY_MODE_XFIELD = 0x01
+REPLY_MODE_CHAR = 0x02
+
+# WCC bits not covered by the two already handled inline in Screen3270.write()
+# (0x01 Reset MDT, 0x02 Keyboard Restore).
+WCC_SOUND_ALARM_BIT = 0x04
+WCC_RESET_BIT = 0x40
+
+# Bytes a numeric-attribute unprotected field accepts from the keyboard
+# (EBCDIC 0-9, '-', '.'); Dup/Field Mark bypass this via input()'s allow_any.
+NUMERIC_ALLOWED_BYTES = frozenset({0x60, 0x4B} | set(range(0xF0, 0xFA)))
 
 QC_SUMMARY = 0x80
 QC_USABLE = 0x81

@@ -10,7 +10,7 @@ cell snapshots from Tn3270Session and converts keyboard events to 3270
 action signals consumed by the session thread.
 
 Cell snapshot format (list of rows*cols tuples):
-    (char: str, fg: QColor, bg: QColor, underscore: bool)
+    (char: str, fg: QColor, bg: QColor, underscore: bool, blink: bool)
 
 Action types emitted via key_action signal:
     'input'        — bytes: EBCDIC character(s) to insert at cursor
@@ -19,6 +19,7 @@ Action types emitted via key_action signal:
     'backtab'      — retreat cursor to previous unprotected field
     'home'         — move cursor to first unprotected field
     'cursor_up/down/left/right' — move cursor one cell
+    'move_cursor'  — bytes: 2-byte big-endian buffer address to jump to
     'backspace'    — delete character and shift field left
     'delete'       — delete character at cursor and shift field left
     'erase_eof'    — erase from cursor to end of field
@@ -35,9 +36,14 @@ Additional shortcuts:
     Alt+D                 — Dup
     Alt+F                 — FldMrk
     PgUp / PgDn           — PF7 / PF8
+
+Mouse:
+    Click (no drag)  — move cursor to that cell ('move_cursor')
+    Click + drag      — select text (Ctrl+C to copy)
+    Double-click      — move cursor there and send Cursor Select (AID 0x7E)
 """
 
-from PySide6.QtWidgets import QWidget
+from PySide6.QtWidgets import QApplication, QWidget
 from PySide6.QtGui import QPainter, QColor, QFontMetrics, QGuiApplication
 from PySide6.QtCore import Qt, QRect, QSize, QTimer, Signal, Slot
 
@@ -73,6 +79,7 @@ _AID_PA1    = 0x6c
 _AID_PA2    = 0x6e
 _AID_PA3    = 0x6b
 _AID_SYSREQ = 0xf0   # sent as IAC IP by the session
+_AID_CURSOR_SELECT = 0x7e   # ISPF/CICS selector-field panels (double-click)
 
 _PF_AIDS = {
     1:  0xf1, 2:  0xf2, 3:  0xf3, 4:  0xf4,
@@ -151,7 +158,7 @@ class TerminalScreen(QWidget):
         self._cells_count = rows * cols
 
         # Blank initial state: all cells = green space on black
-        blank = (' ', _FG_DEF, _BG, False)
+        blank = (' ', _FG_DEF, _BG, False, False)
         self._cells: list = [blank] * self._cells_count
         self._cursor_addr: int  = 0
         self._keyboard_locked: bool = True
@@ -164,6 +171,10 @@ class TerminalScreen(QWidget):
         # Text selection (cell addresses; None = no selection)
         self._sel_start: int | None = None
         self._sel_end:   int | None = None
+        # Mouse-down cell + whether it turned into a drag (selection) rather
+        # than a plain click (move cursor there) — see mouse handlers below.
+        self._press_addr: int | None = None
+        self._dragging: bool = False
 
         # Cursor blink
         self._cursor_vis: bool = True
@@ -246,6 +257,12 @@ class TerminalScreen(QWidget):
         self._connected = connected
         self.update()
 
+    @Slot()
+    def ring_bell(self) -> None:
+        """Host requested the alarm (WCC Sound Alarm bit). Connected via
+        Qt.QueuedConnection from the session thread."""
+        QApplication.beep()
+
     def _set_modifier_state(self, *, mods=None, capslock_active: bool | None = None) -> None:
         changed = False
         if mods is not None:
@@ -290,7 +307,7 @@ class TerminalScreen(QWidget):
             row, col = divmod(addr, self._cols)
             x = col * cw
             y = row * ch
-            char, fg, bg, us = self._cells[addr]
+            char, fg, bg, us, blink = self._cells[addr]
 
             # Selection highlight overrides cell background
             if sel is not None and addr in sel:
@@ -301,7 +318,10 @@ class TerminalScreen(QWidget):
                 fg, bg = bg, fg
 
             p.fillRect(x, y, cw, ch, bg)
-            if char != ' ':
+            # Blinking text shares the cursor-blink timer/phase (_cursor_vis)
+            # rather than a second timer — close enough to real 3270 blink
+            # and avoids extra state.
+            if char != ' ' and not (blink and not self._cursor_vis):
                 p.setPen(fg)
                 p.drawText(x, y + asc, char)
 
@@ -404,18 +424,46 @@ class TerminalScreen(QWidget):
     def mousePressEvent(self, event) -> None:
         if event.button() == Qt.LeftButton:
             addr = self._cell_at(event.position().toPoint())
+            self._press_addr = addr
+            self._dragging = False
             self._sel_start = addr
             self._sel_end   = addr
             self.update()
 
     def mouseMoveEvent(self, event) -> None:
         if event.buttons() & Qt.LeftButton:
-            self._sel_end = self._cell_at(event.position().toPoint())
+            addr = self._cell_at(event.position().toPoint())
+            if addr != self._press_addr:
+                self._dragging = True
+            self._sel_end = addr
             self.update()
 
     def mouseReleaseEvent(self, event) -> None:
-        if event.button() == Qt.LeftButton:
+        if event.button() != Qt.LeftButton:
+            return
+        if self._dragging:
+            # Drag completed — keep the text selection as-is.
             self.update()
+        else:
+            # Plain click, no drag: move the cursor there instead of
+            # leaving a one-cell selection behind.
+            addr = self._press_addr
+            self._clear_selection()
+            if addr is not None:
+                self.key_action.emit('move_cursor', bytes([(addr >> 8) & 0xFF, addr & 0xFF]))
+            self.update()
+        self._press_addr = None
+
+    def mouseDoubleClickEvent(self, event) -> None:
+        if event.button() != Qt.LeftButton:
+            return
+        addr = self._cell_at(event.position().toPoint())
+        self._clear_selection()
+        self.key_action.emit('move_cursor', bytes([(addr >> 8) & 0xFF, addr & 0xFF]))
+        self.key_action.emit('aid', bytes([_AID_CURSOR_SELECT]))
+        self._press_addr = None
+        self._dragging = False
+        self.update()
 
     # ── Keyboard input ─────────────────────────────────────────────────────
 

@@ -44,12 +44,16 @@ from .dsp3270_protocol import (
     QC_USABLE as _QC_USABLE,
     QUERY_PROFILE_BODIES as _QUERY_PROFILE_BODIES,
     QUERY_PROFILE_ORDER as _QUERY_PROFILE_ORDER,
+    REPLY_MODE_CHAR as _REPLY_MODE_CHAR,
+    REPLY_MODE_FIELD as _REPLY_MODE_FIELD,
+    REPLY_MODE_XFIELD as _REPLY_MODE_XFIELD,
     SB as _SB,
     SE as _SE,
     SF_ERASE_RESET as _SF_ERASE_RESET,
     SF_OUTBOUND_DS as _SF_OUTBOUND_DS,
     SF_QUERY_REPLY as _SF_QUERY_REPLY,
     SF_READ_PARTITION as _SF_READ_PARTITION,
+    SF_SET_REPLY_MODE as _SF_SET_REPLY_MODE,
     WILL as _WILL,
     WONT as _WONT,
     build_impl_parts_body as _build_impl_parts_body,
@@ -72,6 +76,7 @@ class Tn3270Session(QObject):
 
     screen_updated = Signal(list, int, bool, bool)
     connected_changed = Signal(bool)
+    bell = Signal()
 
     def __init__(self, parent=None, *, model: int = _DEFAULT_MODEL):
         super().__init__(parent)
@@ -386,14 +391,17 @@ class Tn3270Session(QObject):
 
         if cmd_byte in _CMD_EW:
             self._screen.erase()
-            self._screen.write(data[1], data[2:])
+            if self._screen.write(data[1], data[2:], erase=True):
+                self.bell.emit()
             return True
         if cmd_byte in _CMD_EWA:
             self._screen.erase()
-            self._screen.write(data[1], data[2:])
+            if self._screen.write(data[1], data[2:], erase=True):
+                self.bell.emit()
             return True
         if cmd_byte in _CMD_W:
-            self._screen.write(data[1], data[2:])
+            if self._screen.write(data[1], data[2:]):
+                self.bell.emit()
             return True
         if cmd_byte in _CMD_RB:
             self._send_read_buffer()
@@ -479,11 +487,13 @@ class Tn3270Session(QObject):
             if len(data) >= 2:
                 cmd = data[1]
                 if cmd in (0xF1, 0x01) and len(data) >= 3:
-                    self._screen.write(data[2], data[3:])
+                    if self._screen.write(data[2], data[3:]):
+                        self.bell.emit()
                     return True
                 if cmd in (0xF5, 0x05, 0x7E, 0x0D) and len(data) >= 3:
                     self._screen.erase()
-                    self._screen.write(data[2], data[3:])
+                    if self._screen.write(data[2], data[3:], erase=True):
+                        self.bell.emit()
                     return True
                 if cmd in (0x6F, 0x0F):
                     if self._screen.is_formatted():
@@ -493,6 +503,10 @@ class Tn3270Session(QObject):
                     self._screen.current_aid = _AID_NONE
                     self._screen.keyboard_locked = False
                     return True
+            return False
+        if sf_id == _SF_SET_REPLY_MODE:
+            if len(data) >= 2 and data[1] in (_REPLY_MODE_FIELD, _REPLY_MODE_XFIELD, _REPLY_MODE_CHAR):
+                self._screen.set_reply_mode(data[1])
             return False
         return False
 
@@ -592,6 +606,9 @@ class Tn3270Session(QObject):
             s.cursor_move(0, -1)
         elif action == "cursor_right":
             s.cursor_move(0, 1)
+        elif action == "move_cursor":
+            if len(data) >= 2:
+                s.cursor = ((data[0] << 8) | data[1]) % s.cells_count
         elif action == "backspace":
             s.backspace()
         elif action == "delete":
@@ -605,10 +622,10 @@ class Tn3270Session(QObject):
         elif action == "erase_input":
             s.erase_input()
         elif action == "dup":
-            s.input(0x1C, insert=False)
+            s.input(0x1C, insert=False, allow_any=True)
             s.tab(forward=True)
         elif action == "field_mark":
-            s.input(0x1E, insert=False)
+            s.input(0x1E, insert=False, allow_any=True)
 
         self._emit_update()
 

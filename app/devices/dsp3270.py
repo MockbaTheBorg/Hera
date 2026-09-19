@@ -244,6 +244,9 @@ class Dsp3270Device(DeviceBase):
                 self._session.connected_changed.connect(
                     self._on_connection_state_changed, Qt.QueuedConnection
                 )
+                self._session.bell.connect(
+                    self._workspace.ring_bell, Qt.QueuedConnection
+                )
                 # Sync current state immediately so the widget doesn't start blank/disconnected
                 self._workspace.set_connected(self._session.is_connected)
                 self._on_connection_state_changed(self._session.is_connected)
@@ -345,7 +348,7 @@ class Dsp3270Device(DeviceBase):
             parts.append("INSERT")
         r, c = divmod(cursor, self._cols)
         status = ("  ".join(parts)).ljust(self._cols - 5) + f"{r+1:02d}/{c+1:02d}"
-        oia_cells = [(ch, _FG_DEF, _OIA_BG, False) for ch in status[:self._cols].ljust(self._cols)]
+        oia_cells = [(ch, _FG_DEF, _OIA_BG, False, False) for ch in status[:self._cols].ljust(self._cols)]
         self._mini_cells = list(cells) + oia_cells
         self._cursor_row, self._cursor_col = r, c
         if self._session is not None:

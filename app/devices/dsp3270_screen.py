@@ -16,6 +16,7 @@ from .dsp3270_protocol import (
     HL_NORMAL,
     HL_REVERSE,
     HL_UNDERSCORE,
+    NUMERIC_ALLOWED_BYTES,
     ORDERS,
     ORD_EUA,
     ORD_GE,
@@ -27,7 +28,11 @@ from .dsp3270_protocol import (
     ORD_SBA,
     ORD_SF,
     ORD_SFE,
+    REPLY_MODE_FIELD,
+    REPLY_MODE_XFIELD,
     SHORT_READ_AIDS,
+    WCC_RESET_BIT,
+    WCC_SOUND_ALARM_BIT,
     decode_addr,
     ebcdic_to_char,
     encode_addr,
@@ -166,6 +171,10 @@ class Screen3270:
         self.sa_blink: Optional[bool] = None
         self.sa_reverse: Optional[bool] = None
         self.sa_underscore: Optional[bool] = None
+        # Reply Mode (Set Reply Mode SF, id 0x09) — governs how Read Modified
+        # reports field contents. Resets to Field on connect and on an
+        # Erase/Write whose WCC carries the Reset bit (0x40); see write().
+        self.reply_mode: int = REPLY_MODE_FIELD
 
     def erase(self) -> None:
         for c in self.cells:
@@ -177,7 +186,12 @@ class Screen3270:
         self.sa_reverse = None
         self.sa_underscore = None
 
-    def write(self, wcc: int, data: bytes) -> None:
+    def write(self, wcc: int, data: bytes, *, erase: bool = False) -> bool:
+        """Process a Write/Erase-Write data stream. Returns True if the WCC
+        requests an alarm (bit 0x04) so the caller can sound one; `erase`
+        should be True for EW/EWA (and SF_OUTBOUND_DS equivalents) so the
+        WCC Reset bit (0x40) can reset Reply Mode back to Field, matching
+        how real 3270 firmware scopes that reset to erase commands only."""
         self.address = self.cursor
 
         if wcc & 0x01:
@@ -186,6 +200,8 @@ class Screen3270:
                     c.modified = False
         if wcc & 0x02:
             self.keyboard_locked = False
+        if erase and (wcc & WCC_RESET_BIT):
+            self.reply_mode = REPLY_MODE_FIELD
 
         fe_color = 0x00
         fe_blink = False
@@ -359,6 +375,14 @@ class Screen3270:
         if wcc & 0x02:
             self.keyboard_locked = False
             self.current_aid = AID_NONE
+
+        return bool(wcc & WCC_SOUND_ALARM_BIT)
+
+    def set_reply_mode(self, mode: int) -> None:
+        """Apply a Set Reply Mode structured field (SF id 0x09). Unknown
+        mode values are ignored (caller already validates against the three
+        defined codes before calling this)."""
+        self.reply_mode = mode
 
     def _write_char(
         self,
@@ -550,11 +574,13 @@ class Screen3270:
         col = (col + dc) % self.cols
         self.cursor = row * self.cols + col
 
-    def input(self, byte: int, insert: bool = False) -> None:
+    def input(self, byte: int, insert: bool = False, allow_any: bool = False) -> None:
         if self.keyboard_locked:
             return
         c = self.cells[self.cursor]
         if c.is_attr or self._is_protected(self.cursor):
+            return
+        if not allow_any and byte not in NUMERIC_ALLOWED_BYTES and self._is_numeric(self.cursor):
             return
         if insert:
             end = self._field_end(self.cursor)
@@ -627,6 +653,10 @@ class Screen3270:
     def _is_protected(self, addr: int) -> bool:
         attr = self._find_attr(addr)
         return attr is not None and attr.prot
+
+    def _is_numeric(self, addr: int) -> bool:
+        attr = self._find_attr(addr)
+        return attr is not None and attr.num
 
     def _find_attr(self, addr: int) -> Optional[_Cell]:
         for offset in range(self.cells_count):
@@ -706,50 +736,91 @@ class Screen3270:
             c = self.cells[i]
             if c.is_attr and c.modified:
                 field_start = wrap_addr(i + 1, self.cells_count)
-                field_bytes = bytearray()
-                for offset in range(1, self.cells_count):
-                    a = wrap_addr(field_start + offset - 1, self.cells_count)
-                    cell = self.cells[a]
-                    if cell.is_attr:
-                        break
-                    if cell.byte != 0x00:
-                        field_bytes.append(cell.byte)
                 out.append(0x11)
                 out.extend(encode_addr(field_start))
-                out.extend(field_bytes)
+                out.extend(self._encode_field_readback(field_start, c))
 
         return bytes(out)
 
+    def _encode_field_readback(self, field_start: int, field_attr: "_Cell") -> bytes:
+        """Field content for a Read Modified reply, starting right after its
+        attribute byte. Field mode (the default) reports bare character
+        bytes, matching prior behavior. Extended-Field mode additionally
+        emits SA orders wherever a character's resolved color/highlight
+        differs from what was last reported, so a host that explicitly
+        negotiated Extended-Field mode gets the extended attributes back.
+        (Character mode intentionally falls back to this same field-grouped
+        encoding rather than the spec's true per-character form -- real
+        hosts under Hercules essentially never request it, and a faithful
+        implementation needs an unformatted-screen change-tracking model
+        this screen doesn't otherwise maintain.)"""
+        extended = self.reply_mode == REPLY_MODE_XFIELD
+        out = bytearray()
+        last_color = 0x00
+        last_reverse = False
+        last_underscore = False
+        for offset in range(1, self.cells_count):
+            a = wrap_addr(field_start + offset - 1, self.cells_count)
+            cell = self.cells[a]
+            if cell.is_attr:
+                break
+            if extended:
+                color, hl_reverse, hl_us, _ = self._resolve_ext_attrs(cell, field_attr)
+                if color != last_color:
+                    out.extend((ORD_SA, EAT_COLOR, color))
+                    last_color = color
+                if hl_reverse != last_reverse or hl_us != last_underscore:
+                    hl_value = HL_REVERSE if hl_reverse else HL_UNDERSCORE if hl_us else HL_NORMAL
+                    out.extend((ORD_SA, EAT_HIGHLIGHT, hl_value))
+                    last_reverse, last_underscore = hl_reverse, hl_us
+            if cell.byte != 0x00:
+                out.append(cell.byte)
+        return bytes(out)
+
+    @staticmethod
+    def _resolve_ext_attrs(cell: "_Cell", field_attr: Optional["_Cell"]):
+        """Resolve a data cell's effective (color, hl_reverse, hl_underscore,
+        hl_blink), inheriting from the owning field's attribute cell
+        wherever the data cell itself carries no explicit SA/SFE/MF
+        override. Shared by build_snapshot() (rendering) and
+        _encode_field_readback() (Extended-Field Read Modified)."""
+        color = cell.ext_color
+        hl_reverse = cell.hl_reverse
+        hl_us = cell.hl_underscore
+        hl_blink = cell.hl_blink
+        if field_attr is not None:
+            if not cell.color_explicit and color == 0x00:
+                color = field_attr.ext_color
+            if not cell.reverse_explicit and not hl_reverse:
+                hl_reverse = field_attr.hl_reverse
+            if not cell.underscore_explicit and not hl_us:
+                hl_us = field_attr.hl_underscore
+            if not cell.blink_explicit and not hl_blink:
+                hl_blink = field_attr.hl_blink
+        return color, hl_reverse, hl_us, hl_blink
+
     def build_snapshot(self) -> list:
+        """Cell tuples: (char, fg, bg, underscore, blink)."""
         snap = []
         current_attr: Optional[_Cell] = self._find_attr(0)
         for i in range(self.cells_count):
             c = self.cells[i]
             if c.is_attr:
                 current_attr = c
-                snap.append((' ', _FG_GREEN, _BG_BLACK, False))
+                snap.append((' ', _FG_GREEN, _BG_BLACK, False, False))
                 continue
 
-            color = c.ext_color
-            hl_reverse = c.hl_reverse
-            hl_us = c.hl_underscore
+            color, hl_reverse, hl_us, hl_blink = self._resolve_ext_attrs(c, current_attr)
             hidden = False
 
-            if current_attr is not None:
-                if not c.color_explicit and color == 0x00:
-                    color = current_attr.ext_color
-                if not c.reverse_explicit and not hl_reverse:
-                    hl_reverse = current_attr.hl_reverse
-                if not c.underscore_explicit and not hl_us:
-                    hl_us = current_attr.hl_underscore
-                if color == 0x00:
-                    if current_attr.hidden:
-                        hidden = True
-                    elif current_attr.intensified:
-                        color = 0xF7
+            if current_attr is not None and color == 0x00:
+                if current_attr.hidden:
+                    hidden = True
+                elif current_attr.intensified:
+                    color = 0xF7
 
             if hidden:
-                snap.append((' ', _BG_BLACK, _BG_BLACK, False))
+                snap.append((' ', _BG_BLACK, _BG_BLACK, False, False))
                 continue
 
             fg = COLOR_3279.get(color, _FG_GREEN)
@@ -757,7 +828,7 @@ class Screen3270:
             if hl_reverse:
                 fg, bg = bg, fg
 
-            snap.append((_cell_to_char(c), fg, bg, hl_us))
+            snap.append((_cell_to_char(c), fg, bg, hl_us, hl_blink))
 
         return snap
 

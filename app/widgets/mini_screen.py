@@ -302,7 +302,7 @@ class MiniScreenOverlay:
             row, col = divmod(addr, cols)
             x = col * cell_w
             y = row * cell_h
-            char, fg, bg, underscore = cells[addr]
+            char, fg, bg, underscore, _blink = cells[addr]  # mini overlay ignores blink
             p.fillRect(x, y, cell_w, cell_h, bg)
             if char != " ":
                 p.setPen(fg)
