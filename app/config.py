@@ -113,11 +113,17 @@ class Config:
 
     @staticmethod
     def _int_value(section, key: str, default: int) -> int:
-        return int(section.get(key, default))
+        try:
+            return int(section.get(key, default))
+        except (TypeError, ValueError):
+            return default
 
     @staticmethod
     def _float_value(section, key: str, default: float) -> float:
-        return float(section.get(key, default))
+        try:
+            return float(section.get(key, default))
+        except (TypeError, ValueError):
+            return default
 
     def load(self):
         """Load settings from config file. Missing file uses defaults."""
