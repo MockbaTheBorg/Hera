@@ -152,11 +152,15 @@ class Workspace(QWidget):
         self._current: Optional[QWidget] = None
 
     def set_content(self, widget: QWidget):
-        """Swap in a new workspace widget."""
+        """Swap in a new workspace widget.
+
+        The outgoing widget is only detached, never deleted: devices cache
+        their workspace and hand the same widget back on reselection.
+        Uncached widgets are freed once their last Python reference drops.
+        """
         if self._current is not None:
             self._layout.removeWidget(self._current)
             self._current.setParent(None)
-            self._current.deleteLater()
         self._current = widget
         if widget is not None:
             self._layout.addWidget(widget)
