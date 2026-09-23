@@ -53,6 +53,7 @@ class Pch3525Device(BaseCardDeckDevice):
         self._btn_disconnect = None
         self._disconnect_dlg = None
         self._skip_separator_cards = True
+        self._pending_cards: list[str] = []
 
         if self._port:
             self._reader = SocketReader(
@@ -69,7 +70,9 @@ class Pch3525Device(BaseCardDeckDevice):
     # ── DeviceBase interface ──────────────────────────────────────────────────
 
     def create_workspace(self, parent: QWidget) -> QWidget:
-        return self._create_deck_container(parent)
+        view = self._create_deck_container(parent)
+        self._replay_pending_cards()
+        return view
 
     def get_buttons(self) -> list[ButtonDef]:
         return [
@@ -195,11 +198,14 @@ class Pch3525Device(BaseCardDeckDevice):
 
     # ── Socket line handler ───────────────────────────────────────────────────
 
-    @Slot(str)
-    def _on_line_received(self, line: str) -> None:
-        """Receive one card from Hercules; right-pad/truncate to 80 chars."""
-        if self._deck_view is None:
-            return
+    def _replay_pending_cards(self) -> None:
+        """Replay cards received before the deck view existed."""
+        pending, self._pending_cards = self._pending_cards, []
+        for line in pending:
+            self._receive_card(line)
+
+    def _receive_card(self, line: str) -> None:
+        """Normalize one card (80 cols) and append it to the deck."""
         if self._skip_separator_cards and not self._deck_view.lines and self._looks_like_separator_card(line):
             return
         self.mark_room_activity()
@@ -207,6 +213,14 @@ class Pch3525Device(BaseCardDeckDevice):
         card = line[:80].ljust(80)
         self._deck_view.append_line(card)
         self._deck_view.changed = True
+
+    @Slot(str)
+    def _on_line_received(self, line: str) -> None:
+        """Receive one card from Hercules; buffer until a deck view exists."""
+        if self._deck_view is None:
+            self._pending_cards.append(line)
+            return
+        self._receive_card(line)
 
     # ── Button callbacks ──────────────────────────────────────────────────────
 
