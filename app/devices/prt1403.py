@@ -723,7 +723,7 @@ class Prt1403Device(DeviceBase):
     # ------------------------------------------------------------------
 
     def _do_save(self) -> bool:
-        if not self._all_lines:
+        if not self._all_lines and not self._queued_lines:
             return False
         from PySide6.QtWidgets import QFileDialog
         parent = self._workspace  # may be None, that's fine for the dialog
@@ -737,13 +737,14 @@ class Prt1403Device(DeviceBase):
         try:
             from ..widgets.printer_pdf_export import save_as_pdf
             save_as_pdf(
-                lines=self._all_lines[:],
+                lines=self._all_lines + list(self._queued_lines),
                 path=path,
                 font_filename=self._font_filename,
                 page_length=PAGE_LENGTH,
                 color_form=self._color_name,
             )
-            self._saved = True
+            if not self._queued_lines:
+                self._saved = True
             return True
         except Exception as exc:
             logger.error("Failed to save PDF: %s", exc)
