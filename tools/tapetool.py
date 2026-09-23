@@ -726,12 +726,18 @@ def main(argv: list[str]) -> int:
 
     if args.e:
         outfile = Path(args.e[0])
-        dataset_no = int(args.e[1])
+        try:
+            dataset_no = int(args.e[1])
+        except ValueError:
+            raise TapeToolError(f"invalid dataset number: {args.e[1]}")
         dataset = get_dataset(tape, dataset_no)
         if len(args.e) == 2:
             payload = render_dataset_bytes(dataset, args.a)
         else:
-            member_no = int(args.e[2])
+            try:
+                member_no = int(args.e[2])
+            except ValueError:
+                raise TapeToolError(f"invalid member number: {args.e[2]}")
             member = get_member(dataset, member_no)
             payload = render_member_bytes(member, args.a)
         outfile.write_bytes(payload)
