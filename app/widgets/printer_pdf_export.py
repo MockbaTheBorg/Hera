@@ -120,9 +120,9 @@ def _draw_holes(pdf, color_name: str) -> None:
         pdf.circle(PAGE_W - 20, y, _FREE_HOLE_RADIUS, "FD")
 
 
-def _char_spacing_for_page_width(pdf, font_size: float) -> float:
+def _char_spacing_for_page_width(pdf, font_size: float, family: str) -> float:
     """Return character spacing needed for 132 columns to fill the printable width."""
-    pdf.set_font("prt1403Font", size=font_size)
+    pdf.set_font(family, size=font_size)
     sample = "0" * PAGE_COLS
     base_width = pdf.get_string_width(sample)
     if base_width <= 0 or PAGE_COLS <= 1:
@@ -138,6 +138,7 @@ def _draw_page(
     color_form: str,
     color_holes: str,
     char_spacing: float,
+    font_family: str = "prt1403Font",
 ) -> None:
     """Render one page: background, holes, then text."""
     pdf.add_page()
@@ -150,7 +151,7 @@ def _draw_page(
     # Text — 66 lines across the full page height (matches prt1403 reference).
     # Baseline = (lineNr - 0.25) * line_h  ≡  (i + 0.75) * line_h  for i=0..65.
     # Lines 1-6 land in the white header zone; lines 7-66 in the banded area.
-    pdf.set_font("prt1403Font", size=font_size)
+    pdf.set_font(font_family, size=font_size)
     pdf.set_char_spacing(char_spacing)
     pdf.set_text_color(0, 0, 0)
 
@@ -222,19 +223,22 @@ def save_as_pdf(
     pdf.set_margins(0, 0, 0)
     pdf.set_auto_page_break(False)
 
+    font_family = "prt1403Font"
     if font_file:
-        pdf.add_font("prt1403Font", "", font_file)
+        pdf.add_font(font_family, "", font_file)
     else:
-        # Fallback: register Courier under our alias
-        pdf.add_font("prt1403Font", style="", fname="Courier")
+        # Fallback: use the built-in Courier core font (no add_font needed)
+        font_family = "courier"
+        pdf.set_font("courier", "", font_size)
 
-    char_spacing = _char_spacing_for_page_width(pdf, font_size)
+    char_spacing = _char_spacing_for_page_width(pdf, font_size, font_family)
 
     pages = _paginate_lines(lines, page_length)
     total_pages = len(pages)
 
     for index, page_lines in enumerate(pages, start=1):
-        _draw_page(pdf, page_lines, font_size, line_h, color_form, color_holes, char_spacing)
+        _draw_page(pdf, page_lines, font_size, line_h, color_form, color_holes,
+                   char_spacing, font_family)
         if progress_callback is not None:
             progress_callback(index, total_pages)
 
