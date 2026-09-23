@@ -121,6 +121,10 @@ class CardWidget(QWidget):
         label_h = self._pos_label.height()
         w = float(self.width())
         h = float(self.height() - label_h)
+        if h <= 0.0:
+            h = min(w, float(self.height()))
+        if h <= 0.0 or w <= 0.0:
+            return QRectF(0.0, 0.0, 0.0, 0.0)
         if w / h > _CARD_ASPECT:
             card_h = h
             card_w = h * _CARD_ASPECT
