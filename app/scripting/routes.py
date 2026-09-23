@@ -49,14 +49,18 @@ def _parse_hex_address(raw) -> int:
     if raw is None:
         raise ApiError(400, "Missing 'address'")
     if isinstance(raw, int):
-        return raw & 0xFFF
-    text = str(raw).strip()
-    if text.lower().startswith("0x"):
-        text = text[2:]
-    try:
-        return int(text, 16) & 0xFFF
-    except ValueError:
-        raise ApiError(400, f"Invalid address {raw!r}")
+        value = raw
+    else:
+        text = str(raw).strip()
+        if text.lower().startswith("0x"):
+            text = text[2:]
+        try:
+            value = int(text, 16)
+        except ValueError:
+            raise ApiError(400, f"Invalid address {raw!r}")
+    if not (0 <= value <= 0xFFF):
+        raise ApiError(400, f"Address {raw!r} out of range (0x000-0xFFF)")
+    return value
 
 
 _DEVICE_ACTIONS = {
