@@ -211,3 +211,5 @@ __marimo__/
 
 # Hera extras
 reference/
+tests/
+spool/
