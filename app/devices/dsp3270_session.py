@@ -9,7 +9,26 @@ import threading
 import time
 from typing import Optional
 
-from PySide6.QtCore import QObject, Signal
+try:
+    from PySide6.QtCore import QObject, Signal
+except ImportError:  # allow headless testing without Qt libraries
+    class QObject:
+        def __init__(self, *args, **kwargs):
+            super().__init__()
+
+    class Signal:
+        def __init__(self, *args):
+            pass
+
+        def __get__(self, obj, objtype=None):
+            return _EmitStub()
+
+        def emit(self, *args):
+            pass
+
+    class _EmitStub:
+        def emit(self, *args):
+            pass
 
 from .dsp3270_protocol import (
     AID_NONE as _AID_NONE,
@@ -390,16 +409,22 @@ class Tn3270Session(QObject):
         cmd_byte = data[0]
 
         if cmd_byte in _CMD_EW:
+            if len(data) < 2:
+                return False
             self._screen.erase()
             if self._screen.write(data[1], data[2:], erase=True):
                 self.bell.emit()
             return True
         if cmd_byte in _CMD_EWA:
+            if len(data) < 2:
+                return False
             self._screen.erase()
             if self._screen.write(data[1], data[2:], erase=True):
                 self.bell.emit()
             return True
         if cmd_byte in _CMD_W:
+            if len(data) < 2:
+                return False
             if self._screen.write(data[1], data[2:]):
                 self.bell.emit()
             return True
@@ -421,6 +446,8 @@ class Tn3270Session(QObject):
             self._screen.keyboard_locked = False
             return True
         if cmd_byte in _CMD_WSF:
+            if len(data) < 2:
+                return False
             return self._handle_wsf(data[1:])
         if cmd_byte in _CMD_NOP:
             return False
