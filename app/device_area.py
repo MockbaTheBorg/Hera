@@ -156,6 +156,7 @@ class Workspace(QWidget):
         if self._current is not None:
             self._layout.removeWidget(self._current)
             self._current.setParent(None)
+            self._current.deleteLater()
         self._current = widget
         if widget is not None:
             self._layout.addWidget(widget)
