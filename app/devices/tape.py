@@ -88,6 +88,34 @@ def _validate_tape_filename(filename: str) -> str:
         raise ValueError(f"Invalid tape filename: '{filename}'")
     return filename
 
+
+_SHELL_METACHARS = set(";|&$`\\\"'()<>*?[]{}!~\n\r\t \x00#=")
+
+
+def _validate_shell_token(value: str, what: str) -> str:
+    """
+    Validate a token (volser, owner, filename) before interpolating it into
+    a shell command. Rejects empty values and any shell metacharacter.
+    Raises ValueError on rejection; returns the validated token.
+    """
+    if not value or not isinstance(value, str):
+        raise ValueError(f"Tape {what} must be a non-empty string.")
+    if value.strip() != value:
+        raise ValueError(f"Invalid tape {what}: '{value}'")
+    for ch in value:
+        if ch in _SHELL_METACHARS:
+            raise ValueError(f"Invalid tape {what}: '{value}'")
+    return value
+
+
+def _validate_tape_new_args(filename: str, volser: str, owner: str = "") -> str:
+    filename = _validate_tape_filename(filename)
+    filename = _validate_shell_token(filename, "filename")
+    _validate_shell_token(volser, "volser")
+    if owner:
+        _validate_shell_token(owner, "owner")
+    return filename
+
 from ..device_base import bitmaps_dir as _bitmaps_dir
 
 # Geometry (bitmap-relative, from Jason t_devimg)
@@ -437,6 +465,7 @@ class TapeDevice(DeviceBase):
                 "Pass overwrite=true to replace it."
             )
 
+        filename = _validate_tape_new_args(filename, volser, owner)
         tape_path = f"{self._tapes_folder}/{filename}"
         if self._file_exists(client, tape_path):
             mounts = self._find_mounts(client, tape_path)
