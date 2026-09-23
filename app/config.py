@@ -13,7 +13,7 @@ import re
 from pathlib import Path
 
 VERSION_MAJOR = 1
-VERSION_MINOR = 4
+VERSION_MINOR = 5
 
 CONFIG_DIR = Path.home() / ".config" / "hera"
 CONFIG_FILE = CONFIG_DIR / "hera.conf"
