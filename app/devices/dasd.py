@@ -144,6 +144,7 @@ class DasdDevice(DeviceBase):
         if mounted != self._mounted or vol_label != self._vol_label:
             self._mounted = mounted
             self._vol_label = vol_label
+            self.request_room_repaint()
 
     # ── Workspace ─────────────────────────────────────────────────────────────
 
