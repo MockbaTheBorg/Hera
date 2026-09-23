@@ -289,8 +289,11 @@ def act_reader_deck(client, args):
 def act_reader_load(client, args):
     lines = list(args.line or [])
     if args.file:
-        with open(args.file, "r", encoding="latin-1") as fh:
-            lines.extend(line.rstrip("\n") for line in fh)
+        try:
+            with open(args.file, "r", encoding="latin-1") as fh:
+                lines.extend(line.rstrip("\n") for line in fh)
+        except OSError as exc:
+            raise ApiError(0, f"Cannot read {args.file}: {exc.strerror or exc}")
     if not lines:
         raise ApiError(0, "reader load needs at least one --line or a --file")
     return client.post(_dev_path(client, args, "reader/load"), {"lines": lines})
