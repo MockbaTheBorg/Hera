@@ -65,6 +65,29 @@ from .tape_support import (
 
 logger = logging.getLogger(__name__)
 
+
+def _validate_tape_filename(filename: str) -> str:
+    """
+    Validate a tape filename before building the host path.
+
+    Rejects empty names, absolute paths, path separators, '.'/'..' and any
+    name whose resolution escapes the tapes folder (traversal).
+    Raises ValueError on rejection; returns the validated filename.
+    """
+    if not filename or not isinstance(filename, str):
+        raise ValueError("Tape filename must be a non-empty string.")
+    if filename.strip() != filename or "\x00" in filename:
+        raise ValueError(f"Invalid tape filename: '{filename}'")
+    if os.path.isabs(filename) or filename.startswith(("/", "\\")):
+        raise ValueError(f"Absolute paths are not allowed: '{filename}'")
+    if os.path.basename(filename) != filename or os.path.sep in filename:
+        raise ValueError(
+            f"Path separators are not allowed in tape filename: '{filename}'"
+        )
+    if filename in (".", ".."):
+        raise ValueError(f"Invalid tape filename: '{filename}'")
+    return filename
+
 from ..device_base import bitmaps_dir as _bitmaps_dir
 
 # Geometry (bitmap-relative, from Jason t_devimg)
@@ -371,6 +394,7 @@ class TapeDevice(DeviceBase):
         if client is None:
             raise ValueError("Not connected to Hercules")
 
+        _validate_tape_filename(filename)
         tape_path = f"{self._tapes_folder}/{filename}"
         mounts = self._find_mounts(client, tape_path)
 
