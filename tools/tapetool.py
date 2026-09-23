@@ -51,7 +51,11 @@ def rdw_length(data: bytes) -> int:
 
 
 def bdw_length(data: bytes) -> int:
+    if not data:
+        raise TapeToolError("empty BDW")
     if data[0] & 0x80:
+        if len(data) < 4:
+            raise TapeToolError("truncated high-bit BDW")
         return int.from_bytes(data[:4], "big") & 0x7FFFFFFF
     return int.from_bytes(data[:2], "big")
 
