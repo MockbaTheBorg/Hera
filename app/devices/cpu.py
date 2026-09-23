@@ -109,13 +109,18 @@ class CpuDevice(DeviceBase):
         rows = []
         for i in range(16):
             value = registers.get(f"{prefix}{i}", "0")
-            if prefix == "FPR":
-                try:
+            try:
+                if prefix == "FPR":
+                    try:
+                        value = int(value, 16)
+                    except (TypeError, ValueError):
+                        value = struct.unpack(">Q", struct.pack(">d", float(value)))[0]
+                else:
                     value = int(value, 16)
-                except (TypeError, ValueError):
-                    value = struct.unpack(">Q", struct.pack(">d", float(value)))[0]
-            else:
-                value = int(value, 16)
+            except (TypeError, ValueError):
+                # Malformed value: fall back to zero instead of crashing a poll cycle
+                value = 0
+            value = int(value) & 0xFFFFFFFFFFFFFFFF
             rows.append(value)
         return rows
 
